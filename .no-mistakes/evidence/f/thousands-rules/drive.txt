@@ -1,0 +1,14 @@
+globals: ["undefined","undefined"]
+dc0,10,20: [14,27,40]
+dc-1: "RangeError: Branch level out of range: -1"
+dc21: "RangeError: Branch level out of range: 21"
+dc1.5: "RangeError: Branch level out of range: 1.5"
+caps: [7,3,0,20]
+crit at cap-1: {"state":{"level":5,"starred":true},"delta":1,"starred":true,"skipNext":false}
+crit at 19/lvl20: {"state":{"level":20,"starred":false},"delta":1,"starred":false,"skipNext":false}
+critfail: {"state":{"level":3,"starred":false},"delta":0,"starred":false,"skipNext":true}
+levelup: {"level":6,"starred":false}
+cram: {"eligible":true,"branches":["secondary"]}
+cram lore-speaker: {"eligible":false,"branches":[]}
+practical initiate: false
+skip: {"skipped":true,"skipNext":false}
