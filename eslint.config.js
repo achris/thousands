@@ -11,4 +11,17 @@ export default tseslint.config(
   {
     languageOptions: { globals: { ...globals.browser, ...globals.node } },
   },
+  {
+    // The rules engine must stay pure: no Foundry or PF2e globals.
+    files: ["src/rules/**/*.ts"],
+    rules: {
+      "no-restricted-globals": [
+        "error",
+        ...["game", "foundry", "CONFIG", "Hooks", "ui", "canvas"].map((name) => ({
+          name,
+          message: "src/rules must not reference Foundry or PF2e globals.",
+        })),
+      ],
+    },
+  },
 );
