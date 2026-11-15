@@ -26,5 +26,18 @@
       "name": "English",
       "path": "lang/en.json"
     }
+  ],
+  "packs": [
+    {
+      "name": "academia-feats",
+      "label": "Academia Feats",
+      "path": "packs/academia-feats",
+      "type": "Item",
+      "system": "pf2e",
+      "ownership": {
+        "PLAYER": "OBSERVER",
+        "ASSISTANT": "OWNER"
+      }
+    }
   ]
 }

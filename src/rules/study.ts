@@ -3,7 +3,8 @@ import { MAX_BRANCH_LEVEL } from "./dc.js";
 
 export type DegreeOfSuccess = "criticalSuccess" | "success" | "failure" | "criticalFailure";
 
-export type Rank = "initiate" | "attendant" | "conversant" | "lore-speaker";
+export const RANKS = ["initiate", "attendant", "conversant", "lore-speaker"] as const;
+export type Rank = (typeof RANKS)[number];
 export type Activity = "study" | "cram" | "practical-research";
 
 export interface BranchState {
