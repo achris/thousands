@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   ACADEMIA_FEATS,
   BENEFIT_FEATS,
@@ -9,6 +9,7 @@ import {
   featIdFromSlug,
   sluggify,
 } from "../src/feats/index.js";
+import { consumeDailyFeatUse } from "../src/module.js";
 import {
   BENEFITS,
   BRANCHES,
@@ -26,6 +27,7 @@ const VALID_RULE_KEYS = new Set([
   "GrantItem",
   "Note",
   "RollOption",
+  "RollTwice",
 ]);
 const VALID_SELECTORS = new Set([
   "skill-check",
@@ -96,10 +98,14 @@ describe("academia bonus feat items", () => {
         expect(VALID_RULE_KEYS.has(rule.key), `${item.name}: ${rule.key}`).toBe(true);
         if (rule.key === "ChoiceSet") {
           choiceFlags.add(String(rule.flag));
-        } else if (rule.key === "FlatModifier" || rule.key === "Note") {
+        } else if (rule.key === "FlatModifier" || rule.key === "Note" || rule.key === "RollTwice") {
           const selectors = rule.selector as string[];
           expect(selectors.length).toBeGreaterThan(0);
           selectors.forEach((sel) => expect(VALID_SELECTORS.has(sel), sel).toBe(true));
+          if (rule.key === "RollTwice") {
+            expect(["higher", "lower"]).toContain(rule.keep);
+            expect(Array.isArray(rule.predicate) && rule.predicate.length > 0).toBe(true);
+          }
         } else if (rule.key === "ActiveEffectLike") {
           expect(["add", "upgrade", "override"]).toContain(rule.mode);
           expect(String(rule.path)).toMatch(/^(?:flags\.thousands\.|system\.skills\.)/);
@@ -149,5 +155,185 @@ describe("academia bonus feat items", () => {
       expect(desc.length, `${item.name}: ${desc}`).toBeLessThanOrEqual(MAX_DESCRIPTION_LENGTH);
       expect(desc).toMatch(/^<p>[^<]+\(p\. 6[2-5]\)\.<\/p>$/);
     }
+  });
+
+  it("automates fixed Additional Lore skills and keeps open-ended Lore notes", () => {
+    const cascadeLore = BENEFIT_FEATS.find(
+      (f) => f.name === "Cascade Bearers (Level 1): Additional Lore",
+    );
+    const tempestLore = BENEFIT_FEATS.find(
+      (f) => f.name === "Tempest-Sun Mages (Level 1): Additional Lore",
+    );
+    const emeraldLore = BENEFIT_FEATS.find(
+      (f) => f.name === "Emerald Boughs (Level 1): Additional Lore",
+    );
+
+    expect(cascadeLore?.system.description.value).not.toContain("Manual:");
+    expect(cascadeLore?.system.rules).toContainEqual({
+      key: "ActiveEffectLike",
+      mode: "override",
+      path: "system.skills.academia-lore",
+      value: {
+        attribute: "int",
+        label: "Academia Lore",
+        rank: "match(when(gte(@actor.level, 15), 4), when(gte(@actor.level, 7), 3), when(gte(@actor.level, 3), 2), 1)",
+      },
+    });
+    expect(tempestLore?.system.description.value).not.toContain("Manual:");
+    expect(tempestLore?.system.rules).toContainEqual(
+      expect.objectContaining({
+        key: "ActiveEffectLike",
+        mode: "override",
+        path: "system.skills.warfare-lore",
+      }),
+    );
+    expect(emeraldLore?.system.description.value).toContain("Manual: set Lore to");
+  });
+
+  it("automates Dedicated Attendant rank check and Arcana/Nature skill upgrade", () => {
+    const feat = BENEFIT_FEATS.find(
+      (f) => f.name === "Cascade Bearers (Level 3): Dedicated Attendant",
+    );
+    expect(feat?.system.description.value).toBe(
+      "<p>Grants Magaambyan Attendant Dedication once. Manual: pick cantrip (p. 64).</p>",
+    );
+    const choiceSet = feat?.system.rules.find((r) => r.key === "ChoiceSet");
+    expect(choiceSet).toMatchObject({
+      flag: "skill",
+      rollOption: "dedicated-attendant-skill",
+      allowNoSelection: true,
+      predicate: [
+        {
+          or: ["academia:rank:attendant", "academia:rank:conversant", "academia:rank:lore-speaker"],
+        },
+        { not: "feat:magaambyan-attendant-dedication" },
+      ],
+    });
+    const grant = feat?.system.rules.find((r) => r.key === "GrantItem");
+    expect(grant).toMatchObject({
+      uuid: PF2E_FEAT_UUIDS["magaambyan-attendant-dedication"],
+      predicate: [
+        {
+          or: ["academia:rank:attendant", "academia:rank:conversant", "academia:rank:lore-speaker"],
+        },
+      ],
+      reevaluateOnUpdate: true,
+      allowDuplicate: false,
+    });
+  });
+
+  it("filters granted skill feats by tier max level and branch feats by prerequisites", () => {
+    const levelCaps: [number, number][] = [
+      [4, 4],
+      [9, 6],
+      [15, 14],
+      [19, 20],
+    ];
+    for (const [level, maxFeatLevel] of levelCaps) {
+      const sf = BENEFIT_FEATS.find((f) => f.name.startsWith(`Rain-Scribes (Level ${level}):`));
+      const cs = sf?.system.rules.find((r) => r.key === "ChoiceSet");
+      expect(cs?.choices).toEqual({
+        itemType: "feat",
+        filter: ["item:category:skill", { lte: ["item:level", maxFeatLevel] }],
+      });
+    }
+
+    const emerald7 = BENEFIT_FEATS.find(
+      (f) => f.name === "Emerald Boughs (Level 7): First Branch Feat",
+    );
+    const tempest12 = BENEFIT_FEATS.find(
+      (f) => f.name === "Tempest-Sun Mages (Level 12): Second Branch Feat",
+    );
+    expect(emerald7?.system.rules).toContainEqual({
+      key: "GrantItem",
+      uuid: PF2E_FEAT_UUIDS["emerald-boughs-accustomation"],
+      predicate: [
+        { not: "feat:emerald-boughs-accustomation" },
+        "feat:magaambyan-attendant-dedication",
+        { gte: ["skill:society:rank", 2] },
+      ],
+      reevaluateOnUpdate: true,
+      allowDuplicate: false,
+    });
+    expect(tempest12?.system.rules).toContainEqual({
+      key: "GrantItem",
+      uuid: PF2E_FEAT_UUIDS["tempest-sun-shielding"],
+      predicate: [{ not: "feat:tempest-sun-shielding" }, "feat:tempest-sun-redirection"],
+      reevaluateOnUpdate: true,
+      allowDuplicate: false,
+    });
+    const fallbackCs = tempest12?.system.rules.find((r) => r.key === "ChoiceSet");
+    expect(fallbackCs?.choices).toEqual({
+      itemType: "feat",
+      filter: [
+        "item:category:class",
+        { lte: ["item:level", 10] },
+        { or: ["item:trait:{actor|system.details.class.trait}", "item:trait:archetype"] },
+      ],
+    });
+  });
+
+  it("automates Make Your Own Luck fortune rerolls and daily use consumption hook", async () => {
+    const luck = BENEFIT_FEATS.find((f) => f.name === "Uzunjati (Level 16): Make Your Own Luck");
+    expect(luck?.system.description.value).not.toContain("Manual:");
+    expect(luck?.system.rules).toContainEqual({
+      key: "RollOption",
+      domain: "all",
+      option: "make-your-own-luck:uzunjati",
+      toggleable: true,
+    });
+    expect(luck?.system.rules).toContainEqual({
+      key: "RollTwice",
+      selector: ["crafting", "lore-skill-check"],
+      keep: "higher",
+      predicate: ["make-your-own-luck:uzunjati"],
+    });
+
+    const update = vi.fn();
+    const item = {
+      type: "feat",
+      system: {
+        frequency: { value: 1, max: 1, per: "day" },
+        rules: [
+          {
+            key: "RollOption",
+            domain: "all",
+            option: "make-your-own-luck:uzunjati",
+            toggleable: true,
+            value: true,
+          },
+        ],
+      },
+      update,
+    };
+
+    expect(
+      await consumeDailyFeatUse({
+        isAuthor: false,
+        actor: { items: [item] },
+        flags: { pf2e: { context: { options: ["make-your-own-luck:uzunjati"] } } },
+      }),
+    ).toBe(0);
+    expect(update).not.toHaveBeenCalled();
+
+    expect(
+      await consumeDailyFeatUse({
+        isAuthor: true,
+        actor: { items: [item] },
+        flags: { pf2e: { context: { options: ["make-your-own-luck:uzunjati"] } } },
+      }),
+    ).toBe(1);
+    expect(update).toHaveBeenCalledWith({
+      "system.frequency.value": 0,
+      "system.rules": [
+        {
+          key: "RollOption",
+          domain: "all",
+          option: "make-your-own-luck:uzunjati",
+          toggleable: true,
+          value: false,
+        },
+      ],
+    });
   });
 });

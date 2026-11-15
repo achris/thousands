@@ -8,6 +8,7 @@ import {
   type BenefitInfo,
   type BranchId,
   type BranchKind,
+  type ProficiencyRank,
   type Rank,
 } from "../rules/index.js";
 
@@ -40,7 +41,13 @@ export const PF2E_FEAT_UUIDS = {
 } as const;
 
 export type RuleElementKey =
-  "ActiveEffectLike" | "ChoiceSet" | "FlatModifier" | "GrantItem" | "Note" | "RollOption";
+  | "ActiveEffectLike"
+  | "ChoiceSet"
+  | "FlatModifier"
+  | "GrantItem"
+  | "Note"
+  | "RollOption"
+  | "RollTwice";
 
 export interface RuleElementSource {
   key: RuleElementKey;
@@ -234,9 +241,28 @@ function buildStandingFeats(): PF2eFeatSource[] {
   return feats;
 }
 
+const LORE_RANK_PROGRESSION =
+  "match(when(gte(@actor.level, 15), 4), when(gte(@actor.level, 7), 3), when(gte(@actor.level, 3), 2), 1)";
+
+const ATTENDANT_PLUS_PREDICATE = [
+  { or: ["academia:rank:attendant", "academia:rank:conversant", "academia:rank:lore-speaker"] },
+];
+
+const SKILL_FEAT_MAX_LEVEL: Record<ProficiencyRank, number> = { 1: 4, 2: 6, 3: 14, 4: 20 };
+
+const BRANCH_FEAT_PREREQS: Partial<Record<keyof typeof PF2E_FEAT_UUIDS, unknown[]>> = {
+  "emerald-boughs-accustomation": [
+    "feat:magaambyan-attendant-dedication",
+    { gte: ["skill:society:rank", 2] },
+  ],
+  "tempest-sun-shielding": ["feat:tempest-sun-redirection"],
+  "uzunjati-recollection": ["feat:uzunjati-storytelling"],
+};
+
 const fallbackFeatRules = (
   slug: keyof typeof PF2E_FEAT_UUIDS,
   filter: unknown[],
+  grantPrereqs: unknown[] = [],
 ): RuleElementSource[] => [
   {
     key: "ChoiceSet",
@@ -245,7 +271,12 @@ const fallbackFeatRules = (
     predicate: [`feat:${slug}`],
     choices: { itemType: "feat", filter },
   },
-  { key: "GrantItem", uuid: PF2E_FEAT_UUIDS[slug], predicate: [{ not: `feat:${slug}` }] },
+  {
+    key: "GrantItem",
+    uuid: PF2E_FEAT_UUIDS[slug],
+    predicate: [{ not: `feat:${slug}` }, ...grantPrereqs],
+    ...(grantPrereqs.length > 0 ? { reevaluateOnUpdate: true, allowDuplicate: false } : {}),
+  },
   {
     key: "GrantItem",
     uuid: "{item|flags.system.rulesSelections.fallbackFeat}",
@@ -258,8 +289,11 @@ const PARAGON_SPECS: Record<
   { desc: string; rules: RuleElementSource[]; freq?: { max: number; per: "day" } }
 > = {
   "cascade-bearers": {
-    desc: "1/day cast any common 7th-rank spell. Manual: cast spell and tick daily use (p. 65).",
-    rules: [rollNote(["spell-attack", "spell-dc"])],
+    desc: "1/day cast any common 7th-rank spell. Manual: cast spell (p. 65).",
+    rules: [
+      rollOpt("magical-paragon:cascade-bearers", true),
+      rollNote(["spell-attack", "spell-dc"]),
+    ],
     freq: { max: 1, per: "day" },
   },
   "emerald-boughs": {
@@ -268,11 +302,11 @@ const PARAGON_SPECS: Record<
   },
   "rain-scribes": {
     desc: "Ignore severe/extreme temperatures and difficult/hazardous terrain. Manual: apply in play (p. 65).",
-    rules: [rollNote(["land-speed"])],
+    rules: [rollOpt("magical-paragon:rain-scribes"), rollNote(["land-speed"])],
   },
   "tempest-sun-mages": {
     desc: "Tempest-Sun Shielding protects all allies within 30 ft. Manual: apply to allies in range (p. 65).",
-    rules: [rollNote(["saving-throw"])],
+    rules: [rollOpt("magical-paragon:tempest-sun-mages"), rollNote(["saving-throw"])],
   },
   uzunjati: {
     desc: "+2 circumstance to Uzunjati Recollection/Storytelling. Manual: roll Recall Knowledge 3x (p. 65).",
@@ -294,14 +328,30 @@ function buildBenefitFeat(branchId: BranchId, ben: BenefitInfo): PF2eFeatSource 
   ];
 
   switch (ben.kind) {
-    case "additional-lore":
+    case "additional-lore": {
+      const fixedLore = /\bLore$/.test(b.loreNote);
       return makeFeat(
         name,
         ben.level,
-        `Grants Additional Lore. Manual: set Lore to ${b.loreNote} (p. ${ben.page}).`,
-        [...base, { key: "GrantItem", uuid: PF2E_FEAT_UUIDS["additional-lore"] }],
+        fixedLore
+          ? `Grants Additional Lore for ${b.loreNote} (p. ${ben.page}).`
+          : `Grants Additional Lore. Manual: set Lore to ${b.loreNote} (p. ${ben.page}).`,
+        [
+          ...base,
+          { key: "GrantItem", uuid: PF2E_FEAT_UUIDS["additional-lore"] },
+          ...(fixedLore
+            ? [
+                aeLike("override", `system.skills.${sluggify(b.loreNote)}`, {
+                  attribute: "int",
+                  label: b.loreNote,
+                  rank: LORE_RANK_PROGRESSION,
+                }),
+              ]
+            : []),
+        ],
         prereqs,
       );
+    }
     case "steeped-in-history":
       return makeFeat(
         name,
@@ -321,22 +371,46 @@ function buildBenefitFeat(branchId: BranchId, ben: BenefitInfo): PF2eFeatSource 
       return makeFeat(
         name,
         ben.level,
-        `Grants Magaambyan Attendant Dedication once. Manual: verify Perquisite and configure cantrip/skill (p. ${ben.page}).`,
+        `Grants Magaambyan Attendant Dedication once. Manual: pick cantrip (p. ${ben.page}).`,
         [
           ...base,
           {
+            key: "ChoiceSet",
+            flag: "skill",
+            rollOption: "dedicated-attendant-skill",
+            adjustName: false,
+            allowNoSelection: true,
+            prompt: "PF2E.SpecificRule.Prompt.Skill",
+            predicate: [
+              ...ATTENDANT_PLUS_PREDICATE,
+              { not: "feat:magaambyan-attendant-dedication" },
+            ],
+            choices: (["arcana", "nature"] as const).map((s) => ({
+              label: skillKey(s),
+              value: s,
+              predicate: [{ lt: [`skill:${s}:rank`, 2] }],
+            })),
+          },
+          aeLike("add", "system.skills.{item|flags.system.rulesSelections.skill}.rank", 1, [
+            ...ATTENDANT_PLUS_PREDICATE,
+            { or: ["dedicated-attendant-skill:arcana", "dedicated-attendant-skill:nature"] },
+          ]),
+          {
             key: "GrantItem",
             uuid: PF2E_FEAT_UUIDS["magaambyan-attendant-dedication"],
+            predicate: ATTENDANT_PLUS_PREDICATE,
+            reevaluateOnUpdate: true,
             allowDuplicate: false,
           },
         ],
         [...prereqs, "Perquisite completed"],
       );
-    case "skill-feat":
+    case "skill-feat": {
+      const maxLevel = SKILL_FEAT_MAX_LEVEL[ben.rank ?? 1];
       return makeFeat(
         name,
         ben.level,
-        `Grants a skill feat. Manual: pick ${rankLabel} or lower in ${b.skills.join("/")} (p. ${ben.page}).`,
+        `Grants a skill feat. Manual: pick ${rankLabel} in ${b.skills.join("/")} (p. ${ben.page}).`,
         [
           ...base,
           {
@@ -344,12 +418,16 @@ function buildBenefitFeat(branchId: BranchId, ben: BenefitInfo): PF2eFeatSource 
             flag: "skillFeat",
             adjustName: false,
             prompt: "PF2E.SpecificRule.Prompt.SkillFeat",
-            choices: { itemType: "feat", filter: ["item:category:skill"] },
+            choices: {
+              itemType: "feat",
+              filter: ["item:category:skill", { lte: ["item:level", maxLevel] }],
+            },
           },
           { key: "GrantItem", uuid: "{item|flags.system.rulesSelections.skillFeat}" },
         ],
         prereqs,
       );
+    }
     case "branch-influence":
       return makeFeat(
         name,
@@ -425,13 +503,20 @@ function buildBenefitFeat(branchId: BranchId, ben: BenefitInfo): PF2eFeatSource 
       return makeFeat(
         name,
         ben.level,
-        `Grants ${slug} (or level-${ben.featLevel} class feat if owned). Manual: check prereqs (p. ${ben.page}).`,
+        `Grants ${slug} (or level-${ben.featLevel} class feat if owned). Manual: check fallback prereqs (p. ${ben.page}).`,
         [
           ...base,
-          ...fallbackFeatRules(slug, [
-            "item:category:class",
-            { lte: ["item:level", ben.featLevel] },
-          ]),
+          ...fallbackFeatRules(
+            slug,
+            [
+              "item:category:class",
+              { lte: ["item:level", ben.featLevel] },
+              {
+                or: ["item:trait:{actor|system.details.class.trait}", "item:trait:archetype"],
+              },
+            ],
+            BRANCH_FEAT_PREREQS[slug] ?? ["feat:magaambyan-attendant-dedication"],
+          ),
         ],
         prereqs,
       );
@@ -446,16 +531,24 @@ function buildBenefitFeat(branchId: BranchId, ben: BenefitInfo): PF2eFeatSource 
         prereqs,
       );
     }
-    case "make-your-own-luck":
+    case "make-your-own-luck": {
+      const selectors = b.skills.map((s) => (s === "lore" ? "lore-skill-check" : s));
+      const opt = `make-your-own-luck:${branchId}`;
       return makeFeat(
         name,
         ben.level,
-        `1/day fortune reroll in ${b.skills.join("/")}. Manual: reroll in chat and tick use (p. ${ben.page}).`,
-        [...base, rollNote(b.skills.map((s) => (s === "lore" ? "lore-skill-check" : s)))],
+        `1/day fortune reroll in ${b.skills.join("/")} (p. ${ben.page}).`,
+        [
+          ...base,
+          rollOpt(opt, true),
+          { key: "RollTwice", selector: selectors, keep: "higher", predicate: [opt] },
+          rollNote(selectors),
+        ],
         prereqs,
         ["fortune"],
         { max: 1, per: "day" },
       );
+    }
     case "magical-paragon": {
       const spec = PARAGON_SPECS[branchId];
       return makeFeat(
