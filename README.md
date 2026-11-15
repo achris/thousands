@@ -44,6 +44,14 @@ To install a specific version instead of the latest release, replace `latest/dow
    - Follow any `Manual:` note in the feat's description (for example, naming a granted Lore skill on your sheet or tracking 1/day uses for `Make Your Own Luck` and `Magical Paragon`).
 4. **Toggle situational bonuses**: On your character sheet's **Actions** tab, toggle **Steeped in History** when rolling Recall Knowledge about the Magaambya or your branch, and toggle **Branch Influence** when making Deception, Diplomacy, Intimidation, or Performance checks with members of that branch.
 
+## Rolling Study
+
+With the character's token selected (or as the player assigned to it), type `/study` in chat, or run
+`game.modules.get("thousands").api.study()` from a macro. Pick a branch and skill; the check rolls
+through PF2e at the DC for the branch's level. The roll's chat message shows the change it would
+make, and the GM clicks **Apply** to add the benefit feats for the levels gained, the branch star at
+the cap, and the skip after a critical failure, in place of the manual steps above.
+
 ## Local development
 
 Requires Node.js 22 or later and `zip` / `unzip`.

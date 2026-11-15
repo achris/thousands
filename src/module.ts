@@ -1,4 +1,5 @@
 import { MODULE_ID, initMessage } from "./constants.js";
+import { registerStudy } from "./study/foundry.js";
 
 export const DAILY_TOGGLE_PREFIXES = ["make-your-own-luck:", "magical-paragon:"] as const;
 
@@ -80,6 +81,7 @@ declare const Hooks:
 if (typeof Hooks !== "undefined") {
   Hooks.once("init", () => {
     console.log(initMessage(MODULE_ID));
+    registerStudy();
   });
   Hooks.on("createChatMessage", (message) => {
     void consumeDailyFeatUse(message);

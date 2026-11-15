@@ -1,0 +1,141 @@
+import { MODULE_ID } from "../constants.js";
+import { ACADEMIA_FEATS, type PF2eFeatSource } from "../feats/index.js";
+import {
+  BRANCHES,
+  BRANCH_IDS,
+  MAX_BRANCH_LEVEL,
+  RANKS,
+  applyStudyOutcome,
+  type BranchId,
+  type BranchKind,
+  type BranchState,
+  type DegreeOfSuccess,
+  type Rank,
+} from "../rules/index.js";
+
+/** What an applied result changed, kept so a second Apply or a reroll cannot stack. */
+export interface AppliedRecord {
+  degree: DegreeOfSuccess | "skipped";
+  delta: number;
+  star: boolean;
+  skip: boolean;
+}
+
+/** Stored under `flags.thousands.study`; everything else about a character lives in its feats. */
+export type StudyFlags = { skipNext?: boolean; applied?: Record<string, AppliedRecord> };
+
+export type ItemLike = { id: string; system: { slug?: string | null } };
+
+export interface ActorLike {
+  level: number;
+  items: Iterable<ItemLike>;
+  getFlag(scope: string, key: string): unknown;
+  setFlag(scope: string, key: string, value: unknown): Promise<unknown>;
+  createEmbeddedDocuments(type: "Item", sources: object[]): Promise<unknown>;
+  deleteEmbeddedDocuments(type: "Item", ids: string[]): Promise<unknown>;
+}
+
+export interface AcademiaState {
+  rank: Rank;
+  characterLevel: number;
+  branches: Partial<Record<BranchKind, BranchState & { id: BranchId }>>;
+  flags: StudyFlags;
+}
+
+/** Each academia feat carries one `academia:*` roll option naming what it stands for. */
+const FEAT_BY_OPTION = new Map<string, PF2eFeatSource>();
+for (const feat of ACADEMIA_FEATS) {
+  const rule = feat.system.rules.find((r) => String(r.option).startsWith("academia:"));
+  if (rule) FEAT_BY_OPTION.set(String(rule.option), feat);
+}
+
+export const levelOption = (id: BranchId, level: number) => `academia:branch:${id}:level:${level}`;
+export const starOption = (id: BranchId) => `academia:starred:${id}`;
+
+export function featFor(option: string): PF2eFeatSource {
+  const feat = FEAT_BY_OPTION.get(option);
+  if (!feat) throw new Error(`No academia feat for ${option}`);
+  return feat;
+}
+
+/** The actor's owned item for an academia option, if any. */
+export function ownedItem(actor: ActorLike, option: string): ItemLike | undefined {
+  const slug = FEAT_BY_OPTION.get(option)?.system.slug;
+  return slug ? [...actor.items].find((i) => i.system.slug === slug) : undefined;
+}
+
+export function readState(actor: ActorLike): AcademiaState {
+  const owns = (option: string) => !!ownedItem(actor, option);
+  const branches: AcademiaState["branches"] = {};
+  for (const kind of ["primary", "secondary"] as const) {
+    const id = BRANCH_IDS.find((b) => owns(`academia:branch:${kind}:${b}`));
+    if (!id) continue;
+    let level = MAX_BRANCH_LEVEL;
+    while (level > 0 && !owns(levelOption(id, level))) level--;
+    branches[kind] = { id, level, starred: owns(starOption(id)) };
+  }
+  return {
+    rank: [...RANKS].reverse().find((r) => owns(`academia:rank:${r}`)) ?? "initiate",
+    characterLevel: actor.level,
+    branches,
+    flags: (actor.getFlag(MODULE_ID, "study") as StudyFlags | undefined) ?? {},
+  };
+}
+
+/** One Study check (or one skipped opportunity) as read back from its chat message. */
+export type StudyEntry = { id: string; kind?: BranchKind; degree: DegreeOfSuccess | "skipped" };
+
+/** Works out what applying an entry would change, without touching the actor. */
+export function planStudy(state: AcademiaState, entry: StudyEntry) {
+  if (entry.degree === "skipped") {
+    return {
+      record: { degree: "skipped", delta: 0, star: false, skip: false },
+      feats: [] as PF2eFeatSource[],
+      skipNext: false,
+      summary: "this opportunity is skipped and the pending skip is cleared.",
+    };
+  }
+  const branch = entry.kind && state.branches[entry.kind];
+  if (!entry.kind || !branch) throw new Error(`The character has no ${entry.kind} branch feat.`);
+  const result = applyStudyOutcome(branch, entry.kind, state.characterLevel, entry.degree);
+  const star = result.starred && !branch.starred;
+  const feats: PF2eFeatSource[] = [];
+  for (let level = branch.level + 1; level <= result.state.level; level++) {
+    feats.push(featFor(levelOption(branch.id, level)));
+  }
+  if (star) feats.push(featFor(starOption(branch.id)));
+  const notes = [
+    `${BRANCHES[branch.id].label} ${branch.level} → ${result.state.level}`,
+    ...(star ? ["starred for the next level-up"] : []),
+    ...(result.skipNext ? ["must skip the next Study opportunity"] : []),
+  ];
+  return {
+    record: { degree: entry.degree, delta: result.delta, star, skip: result.skipNext },
+    feats,
+    skipNext: !!state.flags.skipNext || result.skipNext,
+    summary: `${notes.join("; ")}.`,
+  };
+}
+
+/** Applies an entry once; a different result for the same entry (a reroll) replaces the old one. */
+export async function applyStudy(actor: ActorLike, entry: StudyEntry): Promise<boolean> {
+  let state = readState(actor);
+  const previous = state.flags.applied?.[entry.id];
+  if (previous?.degree === entry.degree) return false;
+  if (previous) {
+    const branch = entry.kind && state.branches[entry.kind];
+    const options = branch
+      ? Array.from({ length: previous.delta }, (_, i) => levelOption(branch.id, branch.level - i))
+      : [];
+    if (branch && previous.star) options.push(starOption(branch.id));
+    const ids = options.flatMap((option) => ownedItem(actor, option)?.id ?? []);
+    if (ids.length > 0) await actor.deleteEmbeddedDocuments("Item", ids);
+    state = readState(actor);
+    if (previous.skip) state.flags = { ...state.flags, skipNext: false };
+  }
+  const { feats, record, skipNext } = planStudy(state, entry);
+  const sources = feats.map((feat) => structuredClone(feat));
+  if (sources.length > 0) await actor.createEmbeddedDocuments("Item", sources);
+  await actor.setFlag(MODULE_ID, "study", { skipNext, applied: { [entry.id]: record } });
+  return true;
+}
