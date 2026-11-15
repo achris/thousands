@@ -18,13 +18,14 @@ export const PF2E_SCHEMA_VERSION = 0.961;
 const FP = "Compendium.pf2e.feats-srd.Item.";
 
 /** Verified PF2e 8.7.0 compendium UUIDs in `pf2e.feats-srd`. */
+// prettier-ignore
 export const PF2E_FEAT_UUIDS = {
   "additional-lore": `${FP}BocFD2KV0qgUC76x`,
   "magaambyan-attendant-dedication": `${FP}ZhToff996PnTESwb`,
   "canny-acumen": `${FP}i4yRvVwvXbGZDsD1`,
   "adopted-ancestry": `${FP}ihN8gkHSdPG9Trte`,
-  fleet: `${FP}Ux73dmoF8KnavyUD`,
-  toughness: `${FP}AmP0qu7c5dlBSath`,
+  "fleet": `${FP}Ux73dmoF8KnavyUD`,
+  "toughness": `${FP}AmP0qu7c5dlBSath`,
   "incredible-initiative": `${FP}2kwXTUjYYhoAGySr`,
   "cascade-bearers-flexibility": `${FP}YOU5eCD5S4cS6Qeu`,
   "cascade-bearers-spellcasting": `${FP}V5FKAmcYQF4KRELG`,
