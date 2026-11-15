@@ -2,6 +2,7 @@
   "name": "thousands",
   "version": "0.0.0",
   "private": true,
+  "license": "MIT",
   "description": "Foundry VTT module supporting the Strength of Thousands campaign for Pathfinder 2e.",
   "type": "module",
   "engines": {
@@ -9,6 +10,7 @@
   },
   "scripts": {
     "build": "vite build",
+    "package": "node scripts/package-release.mjs",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
     "typecheck": "tsc --noEmit",

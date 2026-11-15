@@ -5,9 +5,9 @@ import type { Plugin } from "vite";
 import { defineConfig } from "vitest/config";
 import { ACADEMIA_FEATS, PACK_ID, type PF2eFeatSource } from "./src/feats/index.js";
 
-/** Copies the manifest, stylesheet, and language files into dist/ and builds the compendium pack. */
+/** Copies the manifest, license, stylesheet, and language files into dist/ and builds the compendium pack. */
 function copyStaticFiles(): Plugin {
-  const statics = ["module.json", "styles", "lang"];
+  const statics = ["module.json", "LICENSE", "styles", "lang"];
   return {
     name: "thousands-copy-static",
     async closeBundle() {

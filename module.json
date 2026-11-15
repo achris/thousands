@@ -3,6 +3,7 @@
   "title": "Strength of Thousands",
   "description": "Tools for running the Strength of Thousands campaign, starting with the academia subsystem.",
   "version": "0.0.0",
+  "license": "LICENSE",
   "compatibility": {
     "minimum": "14",
     "verified": "14.370"
