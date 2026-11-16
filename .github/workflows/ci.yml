@@ -18,8 +18,31 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Cache PF2e system data
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/pf2e-data
+          key: pf2e-data-${{ hashFiles('module.json') }}
+      - name: Download PF2e system data
+        env:
+          PF2E_DATA_DIR: ${{ runner.temp }}/pf2e-data
+        run: |
+          ver=$(node -p 'JSON.parse(fs.readFileSync("module.json","utf8")).relationships.systems.find(s=>s.id==="pf2e").compatibility.minimum')
+          zip="$PF2E_DATA_DIR/pf2e-$ver-json-assets.zip"
+          mkdir -p "$PF2E_DATA_DIR"
+          [ -f "$zip" ] || curl -fsSL -o "$zip" "https://github.com/foundryvtt/pf2e/releases/download/pf2e-$ver/json-assets.zip"
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
+        env:
+          PF2E_DATA_DIR: ${{ runner.temp }}/pf2e-data
       - run: npm run build
       - run: npm run package -- v0.0.0
+      - name: Upload module build artifact
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: thousands-module
+          path: |
+            module.zip
+            dist/module.json

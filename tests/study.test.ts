@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DegreeOfSuccess, Rank } from "../src/rules/index.js";
-import { describeEntry, entryFromMessage } from "../src/study/chat.js";
-import { registerStudy } from "../src/study/foundry.js";
+import { describeEntry, entryFromMessage, type MessageLike } from "../src/study/chat.js";
+import { registerStudy, study } from "../src/study/foundry.js";
 import {
   startStudy,
   studyOption,
@@ -15,6 +15,7 @@ import {
   type ActorLike,
   featFor,
   levelOption,
+  planStudy,
   readState,
   starOption,
   type StudyActivity,
@@ -251,13 +252,16 @@ describe("starting Study", () => {
     // Foundry v14 ChatLog#processMessage passes ProseMirror's "<p>...</p>" HTML to chatMessage hooks
     // and strips outer <p> tags in ChatLog.parse before matching CHAT_COMMANDS.
     const chatHook = hooks.chatMessage?.[0];
-    expect(chatHook?.({}, "<p>/roll 1d20</p>")).toBe(true);
-    expect(chatHook?.({}, "<p>/study extra</p>")).toBe(true);
+    for (const nonMatch of ["<p>/roll 1d20</p>", "<p>/study extra</p>", "/studying", "<p>hi</p>"]) {
+      expect(chatHook?.({}, nonMatch), nonMatch).toBe(true);
+    }
     expect(wait).not.toHaveBeenCalled();
 
-    expect(chatHook?.({}, "<p>/study</p>")).toBe(false);
-    await vi.waitFor(() => expect(actor.skills.crafting?.roll).toHaveBeenCalledOnce());
-    expect(wait).toHaveBeenCalledOnce();
+    for (const match of ["<p>/study</p>", "/STUDY", "  /study  ", "<P> /Study </P>"]) {
+      expect(chatHook?.({}, match), match).toBe(false);
+    }
+    await vi.waitFor(() => expect(actor.skills.crafting?.roll).toHaveBeenCalledTimes(4));
+    expect(wait).toHaveBeenCalledTimes(4);
     expect(vi.mocked(wait).mock.calls[0]?.[0]).toMatchObject({
       window: { title: "Study" },
       buttons: [
@@ -268,14 +272,114 @@ describe("starting Study", () => {
 
     const cmd = CHAT_COMMANDS.study;
     expect(cmd).toBeDefined();
-    const stripped = "<p>/study</p>".replace(/^<p>|<\/p>$/gi, "");
-    expect(cmd?.rgx.test(stripped)).toBe(true);
+    for (const raw of ["<p>/study</p>", " /STUDY "]) {
+      expect(cmd?.rgx.test(raw.replace(/^<p>|<\/p>$/gi, ""))).toBe(true);
+    }
     expect(cmd?.fn()).toBe(false);
-    await vi.waitFor(() => expect(actor.skills.crafting?.roll).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(actor.skills.crafting?.roll).toHaveBeenCalledTimes(5));
+  });
+
+  it("resolves study() target from explicit actor, then controlled token, then assigned character, then warns", async () => {
+    const explicit = makeActor(1);
+    const tokenActor = makeActor(2);
+    const charActor = makeActor(3);
+    const warn = vi.fn();
+    const createChat = vi.fn(async () => undefined);
+    const mod: { api?: { study?: typeof study } } = {};
+
+    vi.stubGlobal("game", {
+      user: { isGM: true, character: charActor },
+      settings: { register: vi.fn(), get: () => true },
+      modules: { get: () => mod },
+    });
+    vi.stubGlobal("canvas", { tokens: { controlled: [{ actor: tokenActor }] } });
+    vi.stubGlobal("ui", { notifications: { warn } });
+    vi.stubGlobal("ChatMessage", { create: createChat, getSpeaker: () => ({ alias: "Tester" }) });
+    vi.stubGlobal("foundry", {
+      utils: { randomID: () => "skip-id", escapeHTML: (s: string) => s },
+      applications: { api: { DialogV2: { wait: vi.fn(async () => null) } } },
+    });
+    vi.stubGlobal("Hooks", { on: vi.fn() });
+
+    registerStudy();
+    expect(mod.api?.study).toBe(study);
+
+    // 1. Explicit actor wins over token and character, and posts skip chat message when skip is pending.
+    explicit.flag = { skipNext: true };
+    await study(explicit);
+    expect(createChat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: "<p>Tester must skip this Study opportunity after a critical failure.</p>",
+        flags: { thousands: { skip: "skip-id" } },
+      }),
+    );
+
+    // 2. Controlled token wins over user.character.
+    tokenActor.flag = { skipNext: true };
+    await study();
+    expect(createChat).toHaveBeenCalledTimes(2);
+
+    // 3. Assigned character used when no token is controlled.
+    vi.stubGlobal("canvas", { tokens: { controlled: [] } });
+    charActor.flag = { skipNext: true };
+    await study();
+    expect(createChat).toHaveBeenCalledTimes(3);
+
+    // 4. Warns when neither a token nor a character is available.
+    vi.stubGlobal("game", {
+      user: { isGM: true, character: null },
+      settings: { register: vi.fn(), get: () => true },
+      modules: { get: () => mod },
+    });
+    await study();
+    expect(warn).toHaveBeenCalledWith("Select a token or assign a character to Study.");
   });
 });
 
 describe("applying a result", () => {
+  // prettier-ignore
+  it.each<[string, number, Degree, Partial<StudyEntry>, StudyFlags, number, boolean, [number, boolean, StudyFlags, string]]>([
+    ["primary criticalSuccess (+2)", 2, "criticalSuccess", {}, {}, 6, false, [2, false, { skipNext: false, cramFatigue: false }, "Uzunjati 2 → 4."]],
+    ["primary success (+1)", 2, "success", {}, {}, 6, false, [1, false, { skipNext: false, cramFatigue: false }, "Uzunjati 2 → 3."]],
+    ["primary failure (+0)", 2, "failure", {}, {}, 6, false, [0, false, { skipNext: false, cramFatigue: false }, "Uzunjati 2 → 2."]],
+    ["primary criticalFailure (skip)", 2, "criticalFailure", {}, {}, 6, false, [0, false, { skipNext: true, cramFatigue: false }, "Uzunjati 2 → 2; must skip the next Study opportunity."]],
+    ["criticalSuccess 1 below cap stars", 5, "criticalSuccess", {}, {}, 6, false, [1, true, { skipNext: false, cramFatigue: false }, "Uzunjati 5 → 6; starred for the next level-up."]],
+    ["secondary success at cap stars", 2, "success", { kind: "secondary" }, {}, 6, false, [0, true, { skipNext: false, cramFatigue: false }, "Cascade Bearers 3 → 3; starred for the next level-up."]],
+    ["already-starred at cap no duplicate star", 6, "success", {}, {}, 6, true, [0, false, { skipNext: false, cramFatigue: false }, "Uzunjati 6 → 6."]],
+    ["level 20 cap does not star", 20, "criticalSuccess", {}, {}, 20, false, [0, false, { skipNext: false, cramFatigue: false }, "Uzunjati 20 → 20."]],
+    ["Cram sets cramFatigue", 2, "success", { activity: "cram" }, {}, 6, false, [1, false, { skipNext: false, cramFatigue: true }, "Uzunjati 2 → 3; DC 8 flat check against fatigue each day until the next Study."]],
+    ["Study clears cramFatigue", 2, "success", {}, { cramFatigue: true }, 6, false, [1, false, { skipNext: false, cramFatigue: false }, "Uzunjati 2 → 3; clears Cram fatigue."]],
+    ["skipped clears skipNext and keeps cramFatigue", 2, "skipped", {}, { skipNext: true, cramFatigue: true }, 6, false, [0, false, { skipNext: false, cramFatigue: true }, "this opportunity is skipped and the pending skip is cleared."]],
+  ])("plans and describes %s", (_label, top, degree, extra, flags, charLevel, starred, [delta, star, nextFlags, text]) => {
+    const actor = makeActor(top, 3);
+    actor.level = charLevel;
+    actor.flag = flags;
+    if (starred) {
+      actor.items.push({ id: "star", system: { slug: featFor(starOption("uzunjati")).system.slug } });
+    }
+    const e = entry(degree, extra);
+    const planned = planStudy(readState(actor), e);
+    expect(planned.record).toEqual({ degree, delta, star, skip: degree === "criticalFailure" });
+    expect(planned.flags).toEqual(nextFlags);
+    expect(planned.summary).toBe(text);
+    expect(describeEntry(actor, e)).toEqual({ text, done: false });
+  });
+
+  it("handles missing branch feats, multiple rank feats, and unknown feat options", () => {
+    const actor = makeActor(0, 0, "initiate");
+    actor.items.push({
+      id: "r2",
+      system: { slug: featFor("academia:rank:conversant").system.slug },
+    });
+    expect(readState(actor).rank).toBe("conversant");
+    actor.items = [];
+    expect(readState(actor).rank).toBe("initiate");
+    expect(describeEntry(actor, entry("success"))).toEqual({
+      text: "The character has no primary branch feat.",
+      done: true,
+    });
+    expect(() => featFor("academia:nonexistent")).toThrow(/No academia feat/);
+  });
   it("grants one benefit feat per level gained, per outcome", async () => {
     const gained = async (degree: DegreeOfSuccess) => {
       const actor = makeActor(2);
@@ -368,5 +472,95 @@ describe("reading a result from chat", () => {
     expect(entryFromMessage(message("success", ["check:statistic:arcana"]))).toBeNull();
     const skipped = { ...rerolled, flags: { thousands: { skip: "x" } } };
     expect(entryFromMessage(skipped)).toEqual({ id: "x", activity: "study", degree: "skipped" });
+  });
+
+  it("renders the chat card for each outcome, shows Apply to the GM only, and applies on click", async () => {
+    type FakeEl = {
+      tag: string;
+      className: string;
+      textContent: string;
+      type: string;
+      disabled: boolean;
+      children: FakeEl[];
+      onClick?: () => Promise<void>;
+      append(...nodes: FakeEl[]): void;
+      addEventListener(event: string, fn: () => Promise<void>): void;
+      querySelector(sel: string): FakeEl | null;
+    };
+    const createEl = (tag: string): FakeEl => {
+      const el: FakeEl = {
+        tag,
+        className: "",
+        textContent: "",
+        type: "",
+        disabled: false,
+        children: [],
+        append: (...nodes) => el.children.push(...nodes),
+        addEventListener: (_e, fn) => (el.onClick = fn),
+        querySelector: () => el.children.find((c) => c.className === "message-content") ?? null,
+      };
+      return el;
+    };
+
+    let renderHook: ((message: MessageLike, html: HTMLElement) => void) | undefined;
+    const user = { isGM: false };
+    vi.stubGlobal("document", { createElement: createEl });
+    vi.stubGlobal("game", {
+      user,
+      settings: { register: vi.fn(), get: () => true },
+      modules: { get: () => ({}) },
+    });
+    vi.stubGlobal("Hooks", {
+      on: (name: string, fn: (...args: unknown[]) => unknown) => {
+        if (name === "renderChatMessageHTML") renderHook = fn as typeof renderHook;
+      },
+    });
+    registerStudy();
+
+    const actor = makeActor(2);
+    const makeMsg = (outcome: DegreeOfSuccess, id = "m1", activity: StudyActivity = "study") => ({
+      actor,
+      flags: { pf2e: { context: { options: [studyOption(id, activity, "primary")], outcome } } },
+      update: vi.fn(async () => undefined),
+    });
+    const render = (message: MessageLike) => {
+      const rootEl = createEl("li");
+      const content = Object.assign(createEl("div"), { className: "message-content" });
+      rootEl.append(content);
+      renderHook?.(message, rootEl as never);
+      return content.children[0];
+    };
+
+    expect(render({ flags: {}, update: async () => undefined })).toBeUndefined();
+
+    for (const [deg, text] of [
+      ["criticalSuccess", "Academia: Uzunjati 2 → 4."],
+      ["success", "Academia: Uzunjati 2 → 3."],
+      ["failure", "Academia: Uzunjati 2 → 2."],
+      ["criticalFailure", "Academia: Uzunjati 2 → 2; must skip the next Study opportunity."],
+    ] as const) {
+      const card = render(makeMsg(deg));
+      expect(card?.className).toBe("thousands-study");
+      expect(card?.children.map((c) => c.textContent)).toEqual([text]);
+    }
+
+    user.isGM = true;
+    const msg = makeMsg("criticalSuccess");
+    const card = render(msg)!;
+    const button = card.children.find((c) => c.tag === "button")!;
+    expect([button.textContent, button.type]).toEqual(["Apply", "button"]);
+
+    await button.onClick?.();
+    expect(button.disabled).toBe(true);
+    expect(primaryLevel(actor)).toBe(4);
+    expect(msg.update).toHaveBeenCalledWith({ "flags.thousands.appliedAt": expect.any(Number) });
+
+    expect(render(msg)?.children.map((c) => c.textContent)).toEqual([
+      "Academia: applied (+2 branch level).",
+    ]);
+    expect(render(makeMsg("success"))?.children.map((c) => c.textContent)).toEqual([
+      "Academia: the result changed; Apply replaces the old one.",
+      "Apply",
+    ]);
   });
 });

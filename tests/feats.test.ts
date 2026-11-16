@@ -335,5 +335,105 @@ describe("academia bonus feat items", () => {
         },
       ],
     });
+
+    // Defaults frequency.value from max on Magical Paragon, and skips exhausted or untoggled items.
+    const paragonUpdate = vi.fn();
+    const paragonRules = [
+      {
+        key: "RollOption",
+        domain: "all",
+        option: "magical-paragon:cascade-bearers",
+        toggleable: true,
+      },
+    ];
+    const paragonItem = {
+      type: "feat",
+      system: { frequency: { max: 1, per: "day" }, rules: paragonRules },
+      update: paragonUpdate,
+    };
+    const exhaustedItem = {
+      type: "feat",
+      system: { frequency: { value: 0, max: 1, per: "day" }, rules: paragonRules },
+      update: vi.fn(),
+    };
+    expect(
+      await consumeDailyFeatUse({
+        actor: { items: [paragonItem, exhaustedItem, { type: "weapon", update: vi.fn() }] },
+        flags: { pf2e: { context: { options: ["magical-paragon:cascade-bearers"] } } },
+      }),
+    ).toBe(1);
+    expect(paragonUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ "system.frequency.value": 0 }),
+    );
+    expect(exhaustedItem.update).not.toHaveBeenCalled();
+    expect(await consumeDailyFeatUse({})).toBe(0);
+  });
+
+  it("automates standing feats, skill increases, general feats, toggles, and Magical Paragon", () => {
+    const standing = (name: string) => STANDING_FEATS.find((f) => f.name === name)?.system.rules;
+    const benefit = (name: string) => BENEFIT_FEATS.find((f) => f.name === name);
+
+    expect(standing("Academic Rank: Conversant")).toEqual([
+      { key: "RollOption", domain: "all", option: "academia:rank:conversant" },
+      {
+        key: "ActiveEffectLike",
+        mode: "override",
+        path: "flags.thousands.rank",
+        value: "conversant",
+      },
+    ]);
+    expect(standing("Primary Branch: Uzunjati")).toContainEqual({
+      key: "ActiveEffectLike",
+      mode: "override",
+      path: "flags.thousands.primary.branch",
+      value: "uzunjati",
+    });
+    expect(standing("Branch Star: Uzunjati")).toContainEqual({
+      key: "ActiveEffectLike",
+      mode: "override",
+      path: "flags.thousands.branches.uzunjati.starred",
+      value: true,
+    });
+    expect(
+      benefit("Cascade Bearers (Level 11): Steeped in History +2")?.system.rules,
+    ).toContainEqual({
+      key: "FlatModifier",
+      selector: ["skill-check"],
+      type: "circumstance",
+      value: 2,
+      predicate: ["action:recall-knowledge", "steeped-in-history:cascade-bearers"],
+      hideIfDisabled: true,
+    });
+    expect(benefit("Emerald Boughs (Level 17): Branch Influence +3")?.system.rules).toContainEqual({
+      key: "FlatModifier",
+      selector: ["deception", "diplomacy", "intimidation", "performance"],
+      type: "circumstance",
+      value: 3,
+      predicate: ["branch-influence:emerald-boughs"],
+      hideIfDisabled: true,
+    });
+    expect(benefit("Uzunjati (Level 6): Skill Increase (Expert)")?.system.rules).toContainEqual({
+      key: "GrantItem",
+      uuid: PF2E_FEAT_UUIDS["additional-lore"],
+      predicate: ["uzunjati-skill-increase-6:lore"],
+    });
+    expect(benefit("Rain-Scribes (Level 8): General Feat")?.system.rules).toContainEqual({
+      key: "GrantItem",
+      uuid: PF2E_FEAT_UUIDS.fleet,
+      predicate: [{ not: "feat:fleet" }],
+    });
+    const cascadeParagon = benefit("Cascade Bearers (Level 20): Magical Paragon");
+    expect(cascadeParagon?.system.frequency).toEqual({ max: 1, per: "day" });
+    expect(cascadeParagon?.system.rules).toContainEqual(
+      expect.objectContaining({ key: "Note", selector: ["spell-attack", "spell-dc"] }),
+    );
+    expect(benefit("Uzunjati (Level 20): Magical Paragon")?.system.rules).toContainEqual(
+      expect.objectContaining({
+        key: "FlatModifier",
+        selector: ["skill-check"],
+        value: 2,
+        predicate: ["magical-paragon:uzunjati"],
+      }),
+    );
   });
 });
