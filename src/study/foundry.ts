@@ -29,8 +29,24 @@ declare const ui: { notifications: { warn(text: string): void } };
 declare const canvas: { tokens?: { controlled: { actor?: StudyActor | null }[] } };
 declare const foundry: {
   utils: { randomID(): string; escapeHTML(text: string): string };
-  applications: { api: { DialogV2: { wait(config: object): Promise<unknown> } } };
+  applications: {
+    api: { DialogV2: { wait(config: object): Promise<unknown> } };
+    sidebar?: {
+      tabs?: {
+        ChatLog?: {
+          CHAT_COMMANDS?: Record<string, { rgx: RegExp; fn: () => boolean }>;
+        };
+      };
+    };
+  };
 };
+
+const STUDY_COMMAND = /^\s*\/study\s*$/i;
+
+function runStudyCommand(): false {
+  void study();
+  return false;
+}
 
 export const STUDY_SETTINGS: Record<StudySetting, { name: string; hint: string }> = {
   cramStrict: {
@@ -116,10 +132,13 @@ export function registerStudy(): void {
   }
   const module = game.modules.get(MODULE_ID);
   if (module) module.api = { study };
+  if (typeof foundry !== "undefined") {
+    const commands = foundry.applications?.sidebar?.tabs?.ChatLog?.CHAT_COMMANDS;
+    if (commands) commands.study = { rgx: STUDY_COMMAND, fn: runStudyCommand };
+  }
   Hooks.on("chatMessage", (_log: unknown, text: string) => {
-    if (!/^\/study\s*$/i.test(text.trim())) return true;
-    void study();
-    return false;
+    const plain = text.trim().replace(/^<p>|<\/p>$/gi, "");
+    return STUDY_COMMAND.test(plain) ? runStudyCommand() : true;
   });
   Hooks.on("renderChatMessageHTML", (message: MessageLike, html: HTMLElement) => {
     renderStudyCard(message, html, game.user.isGM);

@@ -108,7 +108,11 @@ describe("starting Study", () => {
       "secondary:arcana",
     ]);
     expect(actor.skills["herbalism-lore"]?.roll).toHaveBeenCalledWith(
-      expect.objectContaining({ dc: 16, extraRollOptions: ["thousands:study:abc:study:primary"] }),
+      expect.objectContaining({
+        dc: 16,
+        traits: ["downtime"],
+        extraRollOptions: ["thousands:study:abc:study:primary", "downtime"],
+      }),
     );
   });
 
@@ -144,9 +148,10 @@ describe("starting Study", () => {
     expect(ui.seen[1]?.labels).toEqual(["primary:crafting", "primary:herbalism-lore"]);
     const calls = vi.mocked(actor.skills.crafting!.roll).mock.calls.map(([args]) => args);
     expect(calls.map((c) => c.dc)).toEqual([16, 19]);
-    expect(calls.map((c) => c.extraRollOptions[0])).toEqual([
-      studyOption("abc-1", "cram", "primary"),
-      studyOption("abc-2", "cram", "primary"),
+    expect(calls.map((c) => c.traits)).toEqual([["downtime"], ["downtime"]]);
+    expect(calls.map((c) => c.extraRollOptions)).toEqual([
+      [studyOption("abc-1", "cram", "primary"), "downtime"],
+      [studyOption("abc-2", "cram", "primary"), "downtime"],
     ]);
   });
 
@@ -199,6 +204,74 @@ describe("starting Study", () => {
         expect.objectContaining({ scope: "world", config: true, type: Boolean, default: true }),
       );
     }
+  });
+
+  it("handles /study from Foundry v14 ProseMirror chat input and opens the Study dialog", async () => {
+    const actor = makeActor(2);
+    const hooks: Record<string, ((...args: unknown[]) => unknown)[]> = {};
+    const CHAT_COMMANDS: Record<string, { rgx: RegExp; fn: () => boolean }> = {};
+    const wait = vi.fn(
+      async (config: {
+        buttons: {
+          action: string;
+          callback: (
+            e: unknown,
+            b: { form: { elements: { namedItem(n: string): { value: string } } } },
+          ) => unknown;
+        }[];
+      }) => {
+        const studyBtn = config.buttons.find((b) => b.action === "study")!;
+        return studyBtn.callback(null, {
+          form: { elements: { namedItem: () => ({ value: "0" }) } },
+        });
+      },
+    );
+    vi.stubGlobal("game", {
+      user: { isGM: true, character: actor },
+      settings: { register: vi.fn(), get: () => true },
+      modules: { get: () => ({}) },
+    });
+    vi.stubGlobal("canvas", { tokens: { controlled: [] } });
+    vi.stubGlobal("ui", { notifications: { warn: vi.fn() } });
+    vi.stubGlobal("foundry", {
+      utils: { randomID: () => "id1", escapeHTML: (s: string) => s },
+      applications: {
+        api: { DialogV2: { wait } },
+        sidebar: { tabs: { ChatLog: { CHAT_COMMANDS } } },
+      },
+    });
+    vi.stubGlobal("Hooks", {
+      on: (name: string, fn: (...args: unknown[]) => unknown) => {
+        (hooks[name] ??= []).push(fn);
+      },
+    });
+
+    registerStudy();
+
+    // Foundry v14 ChatLog#processMessage passes ProseMirror's "<p>...</p>" HTML to chatMessage hooks
+    // and strips outer <p> tags in ChatLog.parse before matching CHAT_COMMANDS.
+    const chatHook = hooks.chatMessage?.[0];
+    expect(chatHook?.({}, "<p>/roll 1d20</p>")).toBe(true);
+    expect(chatHook?.({}, "<p>/study extra</p>")).toBe(true);
+    expect(wait).not.toHaveBeenCalled();
+
+    expect(chatHook?.({}, "<p>/study</p>")).toBe(false);
+    await vi.waitFor(() => expect(actor.skills.crafting?.roll).toHaveBeenCalledOnce());
+    expect(wait).toHaveBeenCalledOnce();
+    expect(vi.mocked(wait).mock.calls[0]?.[0]).toMatchObject({
+      window: { title: "Study" },
+      buttons: [
+        expect.objectContaining({ action: "study", label: "Study", disabled: false }),
+        expect.objectContaining({ action: "cram", label: "Cram", disabled: false }),
+      ],
+    });
+
+    const cmd = CHAT_COMMANDS.study;
+    expect(cmd).toBeDefined();
+    const stripped = "<p>/study</p>".replace(/^<p>|<\/p>$/gi, "");
+    expect(cmd?.rgx.test(stripped)).toBe(true);
+    expect(cmd?.fn()).toBe(false);
+    await vi.waitFor(() => expect(actor.skills.crafting?.roll).toHaveBeenCalledTimes(2));
   });
 });
 

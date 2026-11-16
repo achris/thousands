@@ -24,6 +24,7 @@ export interface StatisticLike {
   roll(args: {
     dc: number;
     label: string;
+    traits: string[];
     extraRollOptions: string[];
     callback?: (roll: unknown, outcome: DegreeOfSuccess | null | undefined) => void;
   }): Promise<unknown>;
@@ -109,7 +110,8 @@ async function rollStudy(
   await statistic.roll({
     dc: dcForLevel(branch.level),
     label: `${activity === "cram" ? "Cram" : "Study"}: ${BRANCHES[branch.id].label} (${statistic.label})`,
-    extraRollOptions: [studyOption(id, activity, choice.kind)],
+    traits: ["downtime"],
+    extraRollOptions: [studyOption(id, activity, choice.kind), "downtime"],
     callback: (_roll, outcome) => {
       degree = outcome ?? null;
     },
