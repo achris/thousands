@@ -3,6 +3,7 @@ import { ACADEMIA_FEATS, type PF2eFeatSource } from "../feats/index.js";
 import {
   BRANCHES,
   BRANCH_IDS,
+  CRAM_FLAT_DC,
   MAX_BRANCH_LEVEL,
   RANKS,
   applyStudyOutcome,
@@ -22,7 +23,11 @@ export interface AppliedRecord {
 }
 
 /** Stored under `flags.thousands.study`; everything else about a character lives in its feats. */
-export type StudyFlags = { skipNext?: boolean; applied?: Record<string, AppliedRecord> };
+export type StudyFlags = {
+  skipNext?: boolean;
+  cramFatigue?: boolean;
+  applied?: Record<string, AppliedRecord>;
+};
 
 export type ItemLike = { id: string; system: { slug?: string | null } };
 
@@ -82,16 +87,24 @@ export function readState(actor: ActorLike): AcademiaState {
   };
 }
 
-/** One Study check (or one skipped opportunity) as read back from its chat message. */
-export type StudyEntry = { id: string; kind?: BranchKind; degree: DegreeOfSuccess | "skipped" };
+export type StudyActivity = "study" | "cram";
+
+/** One Study or Cram check (or one skipped opportunity) as read back from its chat message. */
+export interface StudyEntry {
+  id: string;
+  activity: StudyActivity;
+  kind?: BranchKind;
+  degree: DegreeOfSuccess | "skipped";
+}
 
 /** Works out what applying an entry would change, without touching the actor. */
 export function planStudy(state: AcademiaState, entry: StudyEntry) {
+  const { skipNext = false, cramFatigue = false } = state.flags;
   if (entry.degree === "skipped") {
     return {
-      record: { degree: "skipped", delta: 0, star: false, skip: false },
+      record: { degree: "skipped" as const, delta: 0, star: false, skip: false },
       feats: [] as PF2eFeatSource[],
-      skipNext: false,
+      flags: { skipNext: false, cramFatigue },
       summary: "this opportunity is skipped and the pending skip is cleared.",
     };
   }
@@ -104,15 +117,20 @@ export function planStudy(state: AcademiaState, entry: StudyEntry) {
     feats.push(featFor(levelOption(branch.id, level)));
   }
   if (star) feats.push(featFor(starOption(branch.id)));
+  const cram = entry.activity === "cram";
   const notes = [
     `${BRANCHES[branch.id].label} ${branch.level} → ${result.state.level}`,
     ...(star ? ["starred for the next level-up"] : []),
     ...(result.skipNext ? ["must skip the next Study opportunity"] : []),
+    ...(cram
+      ? [`DC ${CRAM_FLAT_DC} flat check against fatigue each day until the next Study`]
+      : []),
+    ...(cramFatigue && !cram ? ["clears Cram fatigue"] : []),
   ];
   return {
     record: { degree: entry.degree, delta: result.delta, star, skip: result.skipNext },
     feats,
-    skipNext: !!state.flags.skipNext || result.skipNext,
+    flags: { skipNext: skipNext || result.skipNext, cramFatigue: cram },
     summary: `${notes.join("; ")}.`,
   };
 }
@@ -133,9 +151,10 @@ export async function applyStudy(actor: ActorLike, entry: StudyEntry): Promise<b
     state = readState(actor);
     if (previous.skip) state.flags = { ...state.flags, skipNext: false };
   }
-  const { feats, record, skipNext } = planStudy(state, entry);
+  const { feats, flags, record } = planStudy(state, entry);
   const sources = feats.map((feat) => structuredClone(feat));
   if (sources.length > 0) await actor.createEmbeddedDocuments("Item", sources);
-  await actor.setFlag(MODULE_ID, "study", { skipNext, applied: { [entry.id]: record } });
+  const applied = { ...state.flags.applied, [entry.id]: record };
+  await actor.setFlag(MODULE_ID, "study", { ...flags, applied });
   return true;
 }

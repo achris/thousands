@@ -44,13 +44,16 @@ To install a specific version instead of the latest release, replace `latest/dow
    - Follow any `Manual:` note in the feat's description (for example, naming a granted Lore skill on your sheet or tracking 1/day uses for `Make Your Own Luck` and `Magical Paragon`).
 4. **Toggle situational bonuses**: On your character sheet's **Actions** tab, toggle **Steeped in History** when rolling Recall Knowledge about the Magaambya or your branch, and toggle **Branch Influence** when making Deception, Diplomacy, Intimidation, or Performance checks with members of that branch.
 
-## Rolling Study
+## Rolling Study and Cram
 
 With the character's token selected (or as the player assigned to it), type `/study` in chat, or run
-`game.modules.get("thousands").api.study()` from a macro. Pick a branch and skill; the check rolls
-through PF2e at the DC for the branch's level. The roll's chat message shows the change it would
-make, and the GM clicks **Apply** to add the benefit feats for the levels gained, the branch star at
-the cap, and the skip after a critical failure, in place of the manual steps above.
+`game.modules.get("thousands").api.study()` from a macro. Pick a branch and skill and choose
+**Study** or **Cram** (enabled when a branch is at least 2 levels below its cap); Cram prompts a
+second check using the branch level the first check would reach. Each check's chat message shows the
+change it would make, and the GM clicks **Apply** to grant the benefit feats, branch star, skip
+flag, and Cram fatigue flag (cleared on the character's next Study). Two GM world settings under
+**Configure Settings** control whether both Cram checks require a branch 2+ levels below its cap and
+whether a critical-failure skip also consumes a Cram opportunity (both default to on).
 
 ## Local development
 

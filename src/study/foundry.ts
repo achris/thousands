@@ -1,7 +1,13 @@
 import { MODULE_ID } from "../constants.js";
-import { applyStudy } from "./academia.js";
+import { applyStudy, type StudyActivity } from "./academia.js";
 import { describeEntry, entryFromMessage, type MessageLike } from "./chat.js";
-import { startStudy, type StudyActor, type StudyUi } from "./roll.js";
+import {
+  startStudy,
+  type CheckChoice,
+  type StudyActor,
+  type StudySetting,
+  type StudyUi,
+} from "./roll.js";
 
 type Hook = (...args: never[]) => unknown;
 type PickButton = { form: { elements: { namedItem(name: string): { value: string } | null } } };
@@ -13,31 +19,53 @@ declare const ChatMessage: {
 };
 declare const game: {
   user: { isGM: boolean; character?: StudyActor | null };
+  settings: {
+    register(scope: string, key: string, config: object): void;
+    get(scope: string, key: string): unknown;
+  };
   modules: { get(id: string): { api?: unknown } | undefined };
 };
 declare const ui: { notifications: { warn(text: string): void } };
 declare const canvas: { tokens?: { controlled: { actor?: StudyActor | null }[] } };
 declare const foundry: {
   utils: { randomID(): string; escapeHTML(text: string): string };
-  applications: { api: { DialogV2: { prompt(config: object): Promise<unknown> } } };
+  applications: { api: { DialogV2: { wait(config: object): Promise<unknown> } } };
+};
+
+export const STUDY_SETTINGS: Record<StudySetting, { name: string; hint: string }> = {
+  cramStrict: {
+    name: "Cram: each check needs an eligible branch",
+    hint: "When enabled, both Cram checks must use a branch at least 2 levels below its cap after accounting for the first check. When disabled, having one eligible branch at the start is enough.",
+  },
+  skipAppliesToCram: {
+    name: "Critical-failure skip consumes Cram",
+    hint: "When enabled, a pending skip after a critical failure skips the next Study or Cram opportunity. When disabled, only Study is blocked and Cram remains available.",
+  },
 };
 
 const foundryUi: StudyUi = {
-  async pick(choices) {
+  async pick(title, choices, allowed) {
     const options = choices.map(
       (c, i) => `<option value="${i}">${foundry.utils.escapeHTML(c.label)}</option>`,
     );
-    const index = await foundry.applications.api.DialogV2.prompt({
-      window: { title: "Study" },
+    const picked = (button: PickButton): CheckChoice | undefined =>
+      choices[Number(button.form.elements.namedItem("check")?.value)];
+    const buttons = (["study", "cram"] as const)
+      .filter((activity) => activity in allowed)
+      .map((activity) => ({
+        action: activity,
+        label: activity === "study" ? "Study" : "Cram",
+        disabled: !allowed[activity],
+        callback: (_event: unknown, button: PickButton) => ({ activity, choice: picked(button) }),
+      }));
+    const result = await foundry.applications.api.DialogV2.wait({
+      window: { title },
       content: `<label>Branch and skill <select name="check">${options.join("")}</select></label>`,
-      ok: {
-        label: "Roll",
-        callback: (_event: unknown, button: PickButton) =>
-          Number(button.form.elements.namedItem("check")?.value),
-      },
+      buttons,
       rejectClose: false,
     });
-    return typeof index === "number" ? (choices[index] ?? null) : null;
+    const answer = result as { activity: StudyActivity; choice?: CheckChoice } | null;
+    return answer?.choice ? { activity: answer.activity, choice: answer.choice } : null;
   },
   warn: (text) => ui.notifications.warn(text),
   postSkip: (actor, id) =>
@@ -46,6 +74,7 @@ const foundryUi: StudyUi = {
       content: `<p>${foundry.utils.escapeHTML(actor.name)} must skip this Study opportunity after a critical failure.</p>`,
       flags: { [MODULE_ID]: { skip: id } },
     }),
+  setting: (key) => game.settings.get(MODULE_ID, key) !== false,
   newId: () => foundry.utils.randomID(),
 };
 
@@ -79,8 +108,12 @@ function renderStudyCard(message: MessageLike, html: HTMLElement, isGM: boolean)
   html.querySelector(".message-content")?.append(card);
 }
 
-/** Registers the `/study` chat command, the macro API, and the chat card. Call on `init`. */
+/** Registers the rule settings, `/study`, the macro API, and the chat card. Call on `init`. */
 export function registerStudy(): void {
+  for (const [key, { name, hint }] of Object.entries(STUDY_SETTINGS)) {
+    const config = { name, hint, scope: "world", config: true, type: Boolean, default: true };
+    game.settings.register(MODULE_ID, key, config);
+  }
   const module = game.modules.get(MODULE_ID);
   if (module) module.api = { study };
   Hooks.on("chatMessage", (_log: unknown, text: string) => {
