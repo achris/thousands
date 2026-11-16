@@ -63,7 +63,7 @@ Requires Node.js 22 or later and `zip` / `unzip`.
 npm ci
 npm run lint                # ESLint and Prettier check
 npm run typecheck           # TypeScript
-npm test                    # Vitest (builds dist/, verifies manifest, pack, and release archive)
+npm test                    # Vitest (builds dist/, verifies manifest, pack, and release archive; downloads and caches PF2e's json-assets.zip, set PF2E_DATA_DIR to relocate the cache)
 npm run build               # writes the module to dist/
 npm run package -- v0.1.0   # stamps dist/module.json for a tag and writes module.zip
 npm run format              # apply Prettier
