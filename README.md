@@ -56,11 +56,7 @@ flag, and Cram fatigue flag (cleared on the character's next Study). When a char
 each starred branch whose cap increases posts a chat card for the GM to **Apply** (granting the new
 branch level benefit feat and removing the `Branch Star` feat). After PF2e's **Rest for the Night**,
 any character carrying the Cram fatigue flag receives a `@Check[flat|dc:8]` chat prompt whose roll
-card lets the GM **Apply** the `Fatigued` condition on a failure. For **Practical Research** (requires
-`Conversant` or `Lore-Speaker` rank), the GM types `/research` in chat (or runs
-`game.modules.get("thousands").api.research()`) to pick the character, branch, check (skill and DC,
-or an outcome entered directly), and an optional reward note; the resulting chat card uses the same
-**Apply** workflow. GM world settings under
+card lets the GM **Apply** the `Fatigued` condition on a failure. **Practical Research** results use the same **Apply** workflow (see step 2 above). GM world settings under
 **Configure Settings** control whether both Cram checks require a branch 2+ levels below its cap and
 whether a critical-failure skip also consumes a Cram opportunity (both default to on), as well as
 the optional even-level primary-branch auto-advance variant (default off, cap 10 or 11).
