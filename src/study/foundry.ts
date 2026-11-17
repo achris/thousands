@@ -1,6 +1,18 @@
 import { MODULE_ID } from "../constants.js";
-import { BRANCHES, CRAM_FLAT_DC, resolveStarOnLevelUp } from "../rules/index.js";
-import { applyStudy, readState, type StudyActivity } from "./academia.js";
+import {
+  AUTO_ADVANCE_CAP,
+  AUTO_ADVANCE_MAX_CAP,
+  BRANCHES,
+  CRAM_FLAT_DC,
+  resolveStarOnLevelUp,
+} from "../rules/index.js";
+import {
+  applyStudy,
+  planStudy,
+  readState,
+  type StudyActivity,
+  type StudyEntry,
+} from "./academia.js";
 import { describeEntry, entryFromMessage, type MessageLike } from "./chat.js";
 import {
   fatigueOption,
@@ -55,16 +67,33 @@ function runStudyCommand(): false {
   return false;
 }
 
-export const STUDY_SETTINGS: Record<StudySetting, { name: string; hint: string }> = {
+export const STUDY_SETTINGS = {
   cramStrict: {
     name: "Cram: each check needs an eligible branch",
     hint: "When enabled, both Cram checks must use a branch at least 2 levels below its cap after accounting for the first check. When disabled, having one eligible branch at the start is enough.",
+    type: Boolean,
+    default: true,
   },
   skipAppliesToCram: {
     name: "Critical-failure skip consumes Cram",
     hint: "When enabled, a pending skip after a critical failure skips the next Study or Cram opportunity. When disabled, only Study is blocked and Cram remains available.",
+    type: Boolean,
+    default: true,
   },
-};
+  autoAdvance: {
+    name: "Auto-advance primary branch on even levels",
+    hint: "Replaces Study and Cram with the variant rule that raises each character's primary branch by 1 at every even character level, up to the configured cap.",
+    type: Boolean,
+    default: false,
+  },
+  autoAdvanceCap: {
+    name: "Auto-advance primary branch cap",
+    hint: "Maximum primary branch level granted by even-level auto-advance. Gaining 1 level at each of the 10 even character levels from 2 through 20 reaches 10, whereas the adventure sidebar prints a cap of 11 at level 20; set to 11 to allow that extra level.",
+    type: Number,
+    default: AUTO_ADVANCE_CAP,
+    range: { min: AUTO_ADVANCE_CAP, max: AUTO_ADVANCE_MAX_CAP, step: 1 },
+  },
+} as const;
 
 const foundryUi: StudyUi = {
   async pick(title, choices, allowed) {
@@ -97,7 +126,8 @@ const foundryUi: StudyUi = {
       content: `<p>${foundry.utils.escapeHTML(actor.name)} must skip this Study opportunity after a critical failure.</p>`,
       flags: { [MODULE_ID]: { skip: id } },
     }),
-  setting: (key) => game.settings.get(MODULE_ID, key) !== false,
+  setting: (key: StudySetting) =>
+    (game.settings.get(MODULE_ID, key) ?? STUDY_SETTINGS[key].default) === true,
   newId: () => foundry.utils.randomID(),
 };
 
@@ -108,7 +138,7 @@ export async function study(actor?: StudyActor | null): Promise<void> {
   await startStudy(target, foundryUi);
 }
 
-/** On a character level increase, posts a GM-applied card for each starred branch that resolves. */
+/** On a character level increase, posts a GM-applied card for auto-advance or each resolved star. */
 export async function resolveActorLevelUp(
   actor: StudyActor,
   changed: ActorUpdateChanges,
@@ -123,6 +153,29 @@ export async function resolveActorLevelUp(
   if (prevLevel !== undefined && newLevel <= prevLevel) return;
 
   const state = readState(actor);
+  if (game.settings.get(MODULE_ID, "autoAdvance") === true) {
+    const branch = state.branches.primary;
+    if (!branch) return;
+    const fromLevel = prevLevel ?? newLevel - 1;
+    const rawCap = game.settings.get(MODULE_ID, "autoAdvanceCap");
+    const cap = typeof rawCap === "number" ? rawCap : AUTO_ADVANCE_CAP;
+    const entry: StudyEntry = {
+      id: foundry.utils.randomID(),
+      activity: "study",
+      kind: "primary",
+      degree: "auto",
+      fromLevel,
+      level: newLevel,
+      cap,
+    };
+    if (planStudy(state, entry).record.delta <= 0) return;
+    await ChatMessage.create({
+      speaker: ChatMessage.getSpeaker({ actor }),
+      content: `<p>${foundry.utils.escapeHTML(actor.name)} reaches level ${newLevel} and auto-advances the ${foundry.utils.escapeHTML(BRANCHES[branch.id].label)} primary branch.</p>`,
+      flags: { [MODULE_ID]: { autoAdvance: { id: entry.id, fromLevel, level: newLevel, cap } } },
+    });
+    return;
+  }
   for (const kind of ["primary", "secondary"] as const) {
     const branch = state.branches[kind];
     if (!branch?.starred) continue;
@@ -140,6 +193,7 @@ export async function resolveActorLevelUp(
 /** Posts the Cram daily flat-check prompt when a flagged character rests for the night. */
 export async function promptCramFatigue(actor: StudyActor): Promise<void> {
   if (actor.type && actor.type !== "character") return;
+  if (game.settings.get(MODULE_ID, "autoAdvance") === true) return;
   const state = readState(actor);
   if (!state.flags.cramFatigue) return;
   const id = foundry.utils.randomID();
@@ -175,9 +229,8 @@ function renderStudyCard(message: MessageLike, html: HTMLElement, isGM: boolean)
 
 /** Registers the rule settings, `/study`, the macro API, and the chat card. Call on `init`. */
 export function registerStudy(): void {
-  for (const [key, { name, hint }] of Object.entries(STUDY_SETTINGS)) {
-    const config = { name, hint, scope: "world", config: true, type: Boolean, default: true };
-    game.settings.register(MODULE_ID, key, config);
+  for (const [key, setting] of Object.entries(STUDY_SETTINGS)) {
+    game.settings.register(MODULE_ID, key, { ...setting, scope: "world", config: true });
   }
   const module = game.modules.get(MODULE_ID);
   if (module) module.api = { study };

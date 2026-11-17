@@ -15,7 +15,14 @@ export interface StarFlag {
   level: number;
 }
 
-/** Reads a Study, Cram, Cram-fatigue, star-resolution, or skipped entry from a chat message. */
+export interface AutoAdvanceFlag {
+  id: string;
+  fromLevel?: number;
+  level: number;
+  cap?: number;
+}
+
+/** Reads a Study, Cram, Cram-fatigue, star-resolution, auto-advance, or skipped entry from a chat message. */
 export function entryFromMessage(message: MessageLike): StudyEntry | null {
   const mod = message.flags[MODULE_ID];
   const skip = mod?.skip;
@@ -33,6 +40,18 @@ export function entryFromMessage(message: MessageLike): StudyEntry | null {
       kind: star.kind,
       degree: "starred",
       level: star.level,
+    };
+  }
+  const auto = mod?.autoAdvance as AutoAdvanceFlag | undefined;
+  if (auto && typeof auto.id === "string" && typeof auto.level === "number") {
+    return {
+      id: auto.id,
+      activity: "study",
+      kind: "primary",
+      degree: "auto",
+      ...(typeof auto.fromLevel === "number" ? { fromLevel: auto.fromLevel } : {}),
+      level: auto.level,
+      ...(typeof auto.cap === "number" ? { cap: auto.cap } : {}),
     };
   }
   const context = message.flags.pf2e?.context as
@@ -58,7 +77,8 @@ export function describeEntry(actor: ActorLike, entry: StudyEntry) {
   }
   if (previous) return { text: "the result changed; Apply replaces the old one.", done: false };
   try {
-    return { text: planStudy(state, entry).summary, done: false };
+    const planned = planStudy(state, entry);
+    return { text: planned.summary, done: entry.degree === "auto" && planned.record.delta === 0 };
   } catch (error) {
     return { text: (error as Error).message, done: true };
   }

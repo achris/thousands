@@ -1,12 +1,15 @@
 import { MODULE_ID } from "../constants.js";
 import { ACADEMIA_FEATS, type PF2eFeatSource } from "../feats/index.js";
 import {
+  AUTO_ADVANCE_CAP,
   BRANCHES,
   BRANCH_IDS,
   CRAM_FLAT_DC,
   MAX_BRANCH_LEVEL,
   RANKS,
   applyStudyOutcome,
+  autoAdvanceOnLevelUp,
+  evenLevelsCrossed,
   resolveStarOnLevelUp,
   type BranchId,
   type BranchKind,
@@ -15,7 +18,7 @@ import {
   type Rank,
 } from "../rules/index.js";
 
-export type AppliedDegree = DegreeOfSuccess | "skipped" | "starred";
+export type AppliedDegree = DegreeOfSuccess | "skipped" | "starred" | "auto";
 
 /** What an applied result changed, kept so a second Apply or a reroll cannot stack. */
 export interface AppliedRecord {
@@ -29,6 +32,7 @@ export interface AppliedRecord {
 export type StudyFlags = {
   skipNext?: boolean;
   cramFatigue?: boolean;
+  autoLevels?: number[];
   applied?: Record<string, AppliedRecord>;
 };
 
@@ -95,23 +99,26 @@ export function readState(actor: ActorLike): AcademiaState {
 
 export type StudyActivity = "study" | "cram";
 
-/** One Study, Cram, Cram-fatigue, star-resolution, or skipped entry from a chat message. */
+/** One Study, Cram, Cram-fatigue, star-resolution, auto-advance, or skipped entry from a chat message. */
 export interface StudyEntry {
   id: string;
   activity: StudyActivity | "fatigue";
   kind?: BranchKind;
   degree: AppliedDegree;
+  fromLevel?: number;
   level?: number;
+  cap?: number;
 }
 
 /** Works out what applying an entry would change, without touching the actor. */
 export function planStudy(state: AcademiaState, entry: StudyEntry) {
   const { skipNext = false, cramFatigue = false } = state.flags;
+  const auto = state.flags.autoLevels ? { autoLevels: state.flags.autoLevels } : {};
   if (entry.degree === "skipped") {
     return {
       record: { degree: "skipped" as const, delta: 0, star: false, skip: false },
       feats: [] as PF2eFeatSource[],
-      flags: { skipNext: false, cramFatigue },
+      flags: { ...auto, skipNext: false, cramFatigue },
       summary: "this opportunity is skipped and the pending skip is cleared.",
     };
   }
@@ -120,7 +127,7 @@ export function planStudy(state: AcademiaState, entry: StudyEntry) {
     return {
       record: { degree: entry.degree, delta: 0, star: false, skip: false },
       feats: [] as PF2eFeatSource[],
-      flags: { skipNext, cramFatigue },
+      flags: { ...auto, skipNext, cramFatigue },
       summary: failed ? "fatigued for the day after Cram." : "avoids Cram fatigue for the day.",
     };
   }
@@ -136,8 +143,32 @@ export function planStudy(state: AcademiaState, entry: StudyEntry) {
     return {
       record: { degree: "starred" as const, delta, star: false, skip: false },
       feats,
-      flags: { skipNext, cramFatigue },
+      flags: { ...auto, skipNext, cramFatigue },
       summary: `${BRANCHES[branch.id].label} ${branch.level} → ${next.level} (star resolved on level-up).`,
+    };
+  }
+  if (entry.degree === "auto") {
+    const toLevel = entry.level ?? state.characterLevel;
+    const fromLevel = entry.fromLevel ?? toLevel - 1;
+    const cap = entry.cap ?? AUTO_ADVANCE_CAP;
+    const next = autoAdvanceOnLevelUp(branch, fromLevel, toLevel, cap, state.flags.autoLevels);
+    const delta = Math.max(0, next.level - branch.level);
+    const feats: PF2eFeatSource[] = [];
+    for (let level = branch.level + 1; level <= next.level; level++) {
+      feats.push(featFor(levelOption(branch.id, level)));
+    }
+    const autoLevels = [
+      ...new Set([...(state.flags.autoLevels ?? []), ...evenLevelsCrossed(fromLevel, toLevel)]),
+    ];
+    return {
+      record: { degree: "auto" as const, delta, star: false, skip: false },
+      feats,
+      flags: {
+        skipNext,
+        cramFatigue,
+        ...(autoLevels.length > 0 ? { autoLevels } : {}),
+      },
+      summary: `${BRANCHES[branch.id].label} ${branch.level} → ${next.level} (auto-advanced at level ${toLevel}).`,
     };
   }
   const result = applyStudyOutcome(branch, entry.kind, state.characterLevel, entry.degree);
@@ -160,7 +191,7 @@ export function planStudy(state: AcademiaState, entry: StudyEntry) {
   return {
     record: { degree: entry.degree, delta: result.delta, star, skip: result.skipNext },
     feats,
-    flags: { skipNext: skipNext || result.skipNext, cramFatigue: cram },
+    flags: { ...auto, skipNext: skipNext || result.skipNext, cramFatigue: cram },
     summary: `${notes.join("; ")}.`,
   };
 }
@@ -190,6 +221,7 @@ export async function applyStudy(actor: ActorLike, entry: StudyEntry): Promise<b
     if (previous.skip) state.flags = { ...state.flags, skipNext: false };
   }
   const { feats, flags, record } = planStudy(state, entry);
+  if (entry.degree === "auto" && record.delta === 0) return false;
   if (entry.degree === "starred" && entry.kind) {
     const branch = state.branches[entry.kind];
     const starId = branch && ownedItem(actor, starOption(branch.id))?.id;

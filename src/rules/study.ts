@@ -17,6 +17,10 @@ export interface BranchState {
 export const CRAM_FLAT_DC = 8;
 /** Levels below the cap a branch must be for Cram to use it. */
 export const CRAM_MIN_GAP = 2;
+/** Default primary-branch cap under even-level auto-advance (10 even levels in 2–20). */
+export const AUTO_ADVANCE_CAP = 10;
+/** Maximum configurable cap for even-level auto-advance (the p. 64 sidebar's stated 11). */
+export const AUTO_ADVANCE_MAX_CAP = 11;
 
 const GAIN: Record<DegreeOfSuccess, number> = {
   criticalSuccess: 2,
@@ -79,6 +83,41 @@ export function resolveStarOnLevelUp(
   if (!state.starred) return state;
   const cap = branchCap(kind, newCharacterLevel);
   return { level: Math.max(state.level, cap), starred: false };
+}
+
+/** Even character levels (2–20) crossed when rising from `previousCharacterLevel` to `newCharacterLevel`. */
+export function evenLevelsCrossed(
+  previousCharacterLevel: number,
+  newCharacterLevel: number,
+): number[] {
+  const start = Math.max(1, Math.trunc(previousCharacterLevel)) + 1;
+  const end = Math.min(MAX_BRANCH_LEVEL, Math.trunc(newCharacterLevel));
+  const levels: number[] = [];
+  for (let level = start; level <= end; level++) {
+    if (level % 2 === 0) levels.push(level);
+  }
+  return levels;
+}
+
+/**
+ * Variant rule (p. 64): on a character level increase, raises the primary branch
+ * by 1 for each unapplied even character level crossed, up to `cap`.
+ */
+export function autoAdvanceOnLevelUp(
+  state: BranchState,
+  previousCharacterLevel: number,
+  newCharacterLevel: number,
+  cap: number = AUTO_ADVANCE_CAP,
+  appliedEvenLevels: Iterable<number> = [],
+): BranchState {
+  const seen = new Set(appliedEvenLevels);
+  const steps = evenLevelsCrossed(previousCharacterLevel, newCharacterLevel).filter(
+    (level) => !seen.has(level),
+  ).length;
+  if (steps === 0) return state;
+  const maxLevel = Math.max(0, Math.min(MAX_BRANCH_LEVEL, Math.trunc(cap)));
+  const nextLevel = Math.max(state.level, Math.min(maxLevel, state.level + steps));
+  return nextLevel === state.level ? state : { ...state, level: nextLevel };
 }
 
 export interface CramEligibility {

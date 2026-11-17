@@ -29,6 +29,7 @@ To install a specific version instead of the latest release, replace `latest/dow
    - **Failure**: No change.
    - **Critical Failure**: No change, and the character must skip their next Study opportunity.
 4. **Rank advancement and Perquisite**: When characters advance in academic rank in the adventure, have them replace their `Academic Rank` feat with `Attendant`, `Conversant`, or `Lore-Speaker`. Verify Perquisite completion before a character claims a level 3 `Dedicated Attendant` benefit feat.
+5. **Opting out of the subsystem (optional variant)**: Under **Configure Settings**, enable **Auto-advance primary branch on even levels** (default off) to replace Study and Cram rolls with automatic primary-branch advancement of +1 level at each even character level, posting a chat card for the GM to **Apply**. **Auto-advance primary branch cap** defaults to `10` (the 10 even levels from 2 through 20) and can be raised to `11` to match the adventure sidebar's printed maximum at level 20.
 
 ## Player Workflow
 
@@ -55,9 +56,10 @@ flag, and Cram fatigue flag (cleared on the character's next Study). When a char
 each starred branch whose cap increases posts a chat card for the GM to **Apply** (granting the new
 branch level benefit feat and removing the `Branch Star` feat). After PF2e's **Rest for the Night**,
 any character carrying the Cram fatigue flag receives a `@Check[flat|dc:8]` chat prompt whose roll
-card lets the GM **Apply** the `Fatigued` condition on a failure. Two GM world settings under
+card lets the GM **Apply** the `Fatigued` condition on a failure. GM world settings under
 **Configure Settings** control whether both Cram checks require a branch 2+ levels below its cap and
-whether a critical-failure skip also consumes a Cram opportunity (both default to on).
+whether a critical-failure skip also consumes a Cram opportunity (both default to on), as well as
+the optional even-level primary-branch auto-advance variant (default off, cap 10 or 11).
 
 ## Local development
 

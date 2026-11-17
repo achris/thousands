@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DegreeOfSuccess, Rank } from "../src/rules/index.js";
 import { describeEntry, entryFromMessage, type MessageLike } from "../src/study/chat.js";
 import {
+  STUDY_SETTINGS,
   promptCramFatigue,
   registerStudy,
   resolveActorLevelUp,
@@ -84,7 +85,7 @@ function makeUi(
     seen: [] as { labels: string[]; allowed: AllowedActivities }[],
     warn: vi.fn(),
     postSkip: vi.fn(async () => undefined),
-    setting: (key: StudySetting) => settings[key] ?? true,
+    setting: (key: StudySetting) => settings[key] ?? STUDY_SETTINGS[key].default,
     newId: () => "abc",
     pick: (async (_title, choices, allowed) => {
       ui.seen.push({ labels: choices.map((c) => `${c.kind}:${c.slug}`), allowed });
@@ -196,16 +197,16 @@ describe("starting Study", () => {
     expect(actor.flag.skipNext).toBe(false);
   });
 
-  it("registers both world settings as GM-only booleans defaulting to the stricter rules", () => {
+  it("registers world settings with auto-advance off by default and cap 10–11", () => {
     const register = vi.fn();
     vi.stubGlobal("game", {
       user: { isGM: true },
-      settings: { register, get: () => true },
+      settings: { register, get: () => undefined },
       modules: { get: () => ({}) },
     });
     vi.stubGlobal("Hooks", { on: vi.fn() });
     registerStudy();
-    expect(register).toHaveBeenCalledTimes(2);
+    expect(register).toHaveBeenCalledTimes(4);
     for (const key of ["cramStrict", "skipAppliesToCram"]) {
       expect(register).toHaveBeenCalledWith(
         "thousands",
@@ -213,6 +214,33 @@ describe("starting Study", () => {
         expect.objectContaining({ scope: "world", config: true, type: Boolean, default: true }),
       );
     }
+    expect(register).toHaveBeenCalledWith(
+      "thousands",
+      "autoAdvance",
+      expect.objectContaining({ scope: "world", config: true, type: Boolean, default: false }),
+    );
+    expect(register).toHaveBeenCalledWith(
+      "thousands",
+      "autoAdvanceCap",
+      expect.objectContaining({
+        scope: "world",
+        config: true,
+        type: Number,
+        default: 10,
+        range: { min: 10, max: 11, step: 1 },
+      }),
+    );
+  });
+
+  it("blocks Study and Cram with a warning while auto-advance is enabled", async () => {
+    const actor = makeActor(2);
+    const ui = makeUi([["study", "crafting"]], { autoAdvance: true });
+    await startStudy(actor, ui);
+    expect(ui.seen).toHaveLength(0);
+    expect(ui.warn).toHaveBeenCalledWith(
+      "Study and Cram are disabled while automatic even-level branch advancement is enabled.",
+    );
+    expect(actor.skills.crafting?.roll).not.toHaveBeenCalled();
   });
 
   it("handles /study from Foundry v14 ProseMirror chat input and opens the Study dialog", async () => {
@@ -237,7 +265,7 @@ describe("starting Study", () => {
     );
     vi.stubGlobal("game", {
       user: { isGM: true, character: actor },
-      settings: { register: vi.fn(), get: () => true },
+      settings: { register: vi.fn(), get: () => undefined },
       modules: { get: () => ({}) },
     });
     vi.stubGlobal("canvas", { tokens: { controlled: [] } });
@@ -297,7 +325,7 @@ describe("starting Study", () => {
 
     vi.stubGlobal("game", {
       user: { isGM: true, character: charActor },
-      settings: { register: vi.fn(), get: () => true },
+      settings: { register: vi.fn(), get: () => undefined },
       modules: { get: () => mod },
     });
     vi.stubGlobal("canvas", { tokens: { controlled: [{ actor: tokenActor }] } });
@@ -336,7 +364,7 @@ describe("starting Study", () => {
     // 4. Warns when neither a token nor a character is available.
     vi.stubGlobal("game", {
       user: { isGM: true, character: null },
-      settings: { register: vi.fn(), get: () => true },
+      settings: { register: vi.fn(), get: () => undefined },
       modules: { get: () => mod },
     });
     await study();
@@ -589,7 +617,7 @@ describe("automatic triggers", () => {
     let nextId = 1;
     vi.stubGlobal("game", {
       user: { id: "u1", isGM: true },
-      settings: { register: vi.fn(), get: () => true },
+      settings: { register: vi.fn(), get: () => undefined },
       modules: { get: () => ({}) },
     });
     vi.stubGlobal("ChatMessage", {
@@ -688,6 +716,143 @@ describe("automatic triggers", () => {
     });
   });
 
+  it("auto-advances the primary branch on even levels when enabled, handles multi-level jumps, enforces the cap, and applies idempotently", async () => {
+    const actor = makeActor(0, 0);
+    actor.level = 1;
+
+    const created: { content: string; flags: Record<string, Record<string, unknown>> }[] = [];
+    const hooks: Record<string, ((...args: unknown[]) => unknown)[]> = {};
+    const settings: Record<string, unknown> = { autoAdvance: false, autoAdvanceCap: 10 };
+    let nextId = 1;
+    vi.stubGlobal("game", {
+      user: { id: "u1", isGM: true },
+      settings: { register: vi.fn(), get: (_scope: string, key: string) => settings[key] },
+      modules: { get: () => ({}) },
+    });
+    vi.stubGlobal("ChatMessage", {
+      create: vi.fn(async (data: (typeof created)[number]) => created.push(data)),
+      getSpeaker: () => ({ alias: "Tester" }),
+    });
+    vi.stubGlobal("foundry", {
+      utils: { randomID: () => `auto-${nextId++}`, escapeHTML: (s: string) => s },
+    });
+    vi.stubGlobal("Hooks", {
+      on: (name: string, fn: (...args: unknown[]) => unknown) => {
+        (hooks[name] ??= []).push(fn);
+      },
+    });
+    registerStudy();
+
+    const updateLevel = async (level: number, userId = "u1") => {
+      hooks.preUpdateActor?.[0]?.(actor);
+      actor.level = level;
+      await resolveActorLevelUp(
+        actor,
+        { system: { details: { level: { value: level } } } },
+        userId,
+      );
+    };
+
+    // Does not fire while autoAdvance is off (default).
+    await updateLevel(2);
+    expect(created).toHaveLength(0);
+
+    // Enable auto-advance and reset actor to level 1.
+    settings.autoAdvance = true;
+    actor.level = 1;
+
+    // Even level-up (1 -> 2) posts a card and advances primary 0 -> 1 on Apply; secondary stays at 0.
+    await updateLevel(2);
+    expect(created).toHaveLength(1);
+    expect(created[0]?.content).toContain(
+      "reaches level 2 and auto-advances the Uzunjati primary branch",
+    );
+    const lvl2Entry = entryFromMessage({
+      flags: created[0]!.flags,
+      update: async () => undefined,
+    })!;
+    expect(describeEntry(actor, lvl2Entry)).toEqual({
+      text: "Uzunjati 0 → 1 (auto-advanced at level 2).",
+      done: false,
+    });
+    expect(await applyStudy(actor, lvl2Entry)).toBe(true);
+    expect(readState(actor).branches).toEqual({
+      primary: { id: "uzunjati", level: 1, starred: false },
+      secondary: { id: "cascade-bearers", level: 0, starred: false },
+    });
+    expect(describeEntry(actor, lvl2Entry)).toEqual({
+      text: "applied (+1 branch level).",
+      done: true,
+    });
+
+    // Idempotent: re-applying the same entry, a new entry id for level 2, or falling and returning to 2 is a no-op.
+    expect(await applyStudy(actor, lvl2Entry)).toBe(false);
+    expect(await applyStudy(actor, { ...lvl2Entry, id: "dup-id" })).toBe(false);
+    expect(describeEntry(actor, { ...lvl2Entry, id: "dup-id" }).done).toBe(true);
+    await updateLevel(1);
+    await updateLevel(2);
+    expect(created).toHaveLength(1);
+
+    // Odd level-up (2 -> 3), unchanged level, lower level, other user, or missing primary branch do not fire.
+    await updateLevel(3);
+    await updateLevel(3);
+    await resolveActorLevelUp(actor, { system: { details: { level: { value: 4 } } } }, "other");
+    expect(created).toHaveLength(1);
+
+    // Multi-level jump (3 -> 7 crosses even levels 4 and 6) advances primary by 2 (1 -> 3).
+    await updateLevel(7);
+    expect(created).toHaveLength(2);
+    const jumpEntry = entryFromMessage({
+      flags: created[1]!.flags,
+      update: async () => undefined,
+    })!;
+    expect(describeEntry(actor, jumpEntry)).toEqual({
+      text: "Uzunjati 1 → 3 (auto-advanced at level 7).",
+      done: false,
+    });
+    expect(await applyStudy(actor, jumpEntry)).toBe(true);
+    expect(primaryLevel(actor)).toBe(3);
+
+    // Cap enforcement: jumping from 7 to 20 with branch at 9 and default cap 10 stops at 10, then cap 11 allows 11.
+    const capActor = makeActor(9, 0);
+    capActor.level = 16;
+    hooks.preUpdateActor?.[0]?.(capActor);
+    capActor.level = 20;
+    await resolveActorLevelUp(capActor, { system: { details: { level: { value: 20 } } } });
+    expect(created).toHaveLength(3);
+    const cap10Entry = entryFromMessage({
+      flags: created[2]!.flags,
+      update: async () => undefined,
+    })!;
+    expect(describeEntry(capActor, cap10Entry)).toEqual({
+      text: "Uzunjati 9 → 10 (auto-advanced at level 20).",
+      done: false,
+    });
+    expect(await applyStudy(capActor, cap10Entry)).toBe(true);
+    expect(primaryLevel(capActor)).toBe(10);
+
+    // At cap 10, another even level does not post a card; raising autoAdvanceCap to 11 allows 10 -> 11.
+    capActor.level = 18;
+    hooks.preUpdateActor?.[0]?.(capActor);
+    capActor.level = 20;
+    await resolveActorLevelUp(capActor, { system: { details: { level: { value: 20 } } } });
+    expect(created).toHaveLength(3);
+
+    settings.autoAdvanceCap = 11;
+    const cap11Actor = makeActor(10, 0);
+    cap11Actor.level = 18;
+    hooks.preUpdateActor?.[0]?.(cap11Actor);
+    cap11Actor.level = 20;
+    await resolveActorLevelUp(cap11Actor, { system: { details: { level: { value: 20 } } } });
+    expect(created).toHaveLength(4);
+    const cap11Entry = entryFromMessage({
+      flags: created[3]!.flags,
+      update: async () => undefined,
+    })!;
+    expect(await applyStudy(cap11Actor, cap11Entry)).toBe(true);
+    expect(primaryLevel(cap11Actor)).toBe(11);
+  });
+
   it("prompts the DC 8 flat check on Rest for the Night only for flagged characters and applies idempotently", async () => {
     const unflagged = makeActor(2);
     const flagged = makeActor(2);
@@ -698,7 +863,7 @@ describe("automatic triggers", () => {
     const hooks: Record<string, ((...args: unknown[]) => unknown)[]> = {};
     vi.stubGlobal("game", {
       user: { isGM: true },
-      settings: { register: vi.fn(), get: () => true },
+      settings: { register: vi.fn(), get: () => undefined },
       modules: { get: () => ({}) },
     });
     vi.stubGlobal("ChatMessage", {

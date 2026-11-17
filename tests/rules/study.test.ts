@@ -1,14 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
+  AUTO_ADVANCE_CAP,
+  AUTO_ADVANCE_MAX_CAP,
   BRANCHES,
   BRANCH_IDS,
   DC_BY_LEVEL,
   applyStudyOutcome,
+  autoAdvanceOnLevelUp,
   branchCap,
   canDoActivity,
   consumeSkip,
   cramEligibility,
   dcForLevel,
+  evenLevelsCrossed,
   resolveStarOnLevelUp,
   type BranchKind,
   type BranchState,
@@ -138,6 +142,46 @@ describe("star resolution", () => {
   });
   it("does not star at the absolute maximum", () => {
     expect(applyStudyOutcome(st(20), "primary", 20, "success").state).toEqual(st(20));
+  });
+});
+
+describe("even-level auto-advance", () => {
+  it("lists even character levels crossed between previous and new levels", () => {
+    expect(evenLevelsCrossed(1, 2)).toEqual([2]);
+    expect(evenLevelsCrossed(2, 3)).toEqual([]);
+    expect(evenLevelsCrossed(1, 6)).toEqual([2, 4, 6]);
+    expect(evenLevelsCrossed(1, 5)).toEqual([2, 4]);
+    expect(evenLevelsCrossed(6, 6)).toEqual([]);
+    expect(evenLevelsCrossed(6, 4)).toEqual([]);
+    expect(evenLevelsCrossed(0, 2)).toEqual([2]);
+    expect(evenLevelsCrossed(1, 20)).toHaveLength(AUTO_ADVANCE_CAP);
+    expect(evenLevelsCrossed(18, 25)).toEqual([20]);
+  });
+
+  it("raises the primary branch on even levels, ignores odd/unchanged/falling levels, and handles multi-level jumps", () => {
+    expect(autoAdvanceOnLevelUp(st(0), 1, 2)).toEqual(st(1));
+    const odd = st(1);
+    expect(autoAdvanceOnLevelUp(odd, 2, 3)).toBe(odd);
+    expect(autoAdvanceOnLevelUp(odd, 3, 3)).toBe(odd);
+    expect(autoAdvanceOnLevelUp(odd, 4, 2)).toBe(odd);
+    expect(autoAdvanceOnLevelUp(st(0), 1, 6)).toEqual(st(3));
+    expect(autoAdvanceOnLevelUp(st(1), 2, 7)).toEqual(st(3));
+  });
+
+  it("enforces the default cap of 10 and optional cap of 11, and skips already-applied even levels", () => {
+    let fromZero = st(0);
+    for (let lvl = 2; lvl <= 20; lvl++) {
+      fromZero = autoAdvanceOnLevelUp(fromZero, lvl - 1, lvl);
+    }
+    expect(fromZero).toEqual(st(AUTO_ADVANCE_CAP));
+
+    expect(autoAdvanceOnLevelUp(st(9), 16, 20, AUTO_ADVANCE_CAP)).toEqual(st(10));
+    expect(autoAdvanceOnLevelUp(st(10), 18, 20, AUTO_ADVANCE_CAP)).toEqual(st(10));
+    expect(autoAdvanceOnLevelUp(st(9), 16, 20, AUTO_ADVANCE_MAX_CAP)).toEqual(st(11));
+    expect(autoAdvanceOnLevelUp(st(10), 18, 20, AUTO_ADVANCE_MAX_CAP)).toEqual(st(11));
+    expect(autoAdvanceOnLevelUp(st(11), 18, 20, AUTO_ADVANCE_MAX_CAP)).toEqual(st(11));
+    expect(autoAdvanceOnLevelUp(st(1), 1, 4, AUTO_ADVANCE_CAP, [2])).toEqual(st(2));
+    expect(autoAdvanceOnLevelUp(st(1), 1, 2, AUTO_ADVANCE_CAP, [2])).toEqual(st(1));
   });
 });
 

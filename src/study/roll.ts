@@ -34,7 +34,7 @@ export type StudyActor = ActorLike & { name: string; skills: Record<string, Stat
 
 export type CheckChoice = { kind: BranchKind; slug: string; label: string };
 export type AllowedActivities = Partial<Record<StudyActivity, boolean>>;
-export type StudySetting = "cramStrict" | "skipAppliesToCram";
+export type StudySetting = "cramStrict" | "skipAppliesToCram" | "autoAdvance";
 
 /** Everything the flow needs from Foundry, so tests can stand in for it. */
 export interface StudyUi {
@@ -126,6 +126,11 @@ async function rollStudy(
 
 /** Runs Study or Cram for a character: pick, roll at the engine's DC, leave the result in chat. */
 export async function startStudy(actor: StudyActor, ui: StudyUi): Promise<void> {
+  if (ui.setting("autoAdvance")) {
+    return ui.warn(
+      "Study and Cram are disabled while automatic even-level branch advancement is enabled.",
+    );
+  }
   const state = readState(actor);
   const choices = studyChoices(actor, state);
   if (!canDoActivity("study", state.rank) || choices.length === 0) {
