@@ -1,7 +1,14 @@
 import { MODULE_ID } from "../constants.js";
 import type { BranchKind, DegreeOfSuccess } from "../rules/index.js";
 import { planStudy, readState, type ActorLike, type StudyEntry } from "./academia.js";
-import { parseStudyOption } from "./roll.js";
+import { RESEARCH_NOTE_PREFIX, parseStudyOption, type ResearchFlag } from "./roll.js";
+
+const DEGREES = new Set<DegreeOfSuccess>([
+  "criticalSuccess",
+  "success",
+  "failure",
+  "criticalFailure",
+]);
 
 export interface MessageLike {
   flags: Record<string, Record<string, unknown> | undefined>;
@@ -22,7 +29,7 @@ export interface AutoAdvanceFlag {
   cap?: number;
 }
 
-/** Reads a Study, Cram, Cram-fatigue, star-resolution, auto-advance, or skipped entry from a chat message. */
+/** Reads a Study, Cram, Practical Research, Cram-fatigue, star-resolution, auto-advance, or skipped entry from a chat message. */
 export function entryFromMessage(message: MessageLike): StudyEntry | null {
   const mod = message.flags[MODULE_ID];
   const skip = mod?.skip;
@@ -54,6 +61,22 @@ export function entryFromMessage(message: MessageLike): StudyEntry | null {
       ...(typeof auto.cap === "number" ? { cap: auto.cap } : {}),
     };
   }
+  const research = mod?.research as ResearchFlag | undefined;
+  if (
+    research &&
+    typeof research.id === "string" &&
+    (research.kind === "primary" || research.kind === "secondary") &&
+    DEGREES.has(research.degree)
+  ) {
+    const note = typeof research.note === "string" ? research.note.trim() : "";
+    return {
+      id: research.id,
+      activity: "practical-research",
+      kind: research.kind,
+      degree: research.degree,
+      ...(note ? { note } : {}),
+    };
+  }
   const context = message.flags.pf2e?.context as
     { options?: string[]; outcome?: DegreeOfSuccess | null } | undefined;
   const fatigue = mod?.fatigue;
@@ -61,7 +84,12 @@ export function entryFromMessage(message: MessageLike): StudyEntry | null {
     return { id: fatigue, activity: "fatigue", degree: context.outcome };
   }
   const parsed = context?.options?.map(parseStudyOption).find((entry) => entry !== null);
-  return parsed && context?.outcome ? { ...parsed, degree: context.outcome } : null;
+  if (!parsed || !context?.outcome) return null;
+  const rawNote = context.options
+    ?.find((opt) => opt.startsWith(RESEARCH_NOTE_PREFIX))
+    ?.slice(RESEARCH_NOTE_PREFIX.length);
+  const note = rawNote ? decodeURIComponent(rawNote) : undefined;
+  return { ...parsed, degree: context.outcome, ...(note ? { note } : {}) };
 }
 
 /** The line shown on the card, and whether this exact result is already applied. */
@@ -73,7 +101,8 @@ export function describeEntry(actor: ActorLike, entry: StudyEntry) {
       const failed = previous.degree === "failure" || previous.degree === "criticalFailure";
       return { text: failed ? "applied (fatigued)." : "applied (no fatigue).", done: true };
     }
-    return { text: `applied (+${previous.delta} branch level).`, done: true };
+    const note = entry.note ? `; ${entry.note}` : "";
+    return { text: `applied (+${previous.delta} branch level${note}).`, done: true };
   }
   if (previous) return { text: "the result changed; Apply replaces the old one.", done: false };
   try {

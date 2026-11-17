@@ -97,9 +97,9 @@ export function readState(actor: ActorLike): AcademiaState {
   };
 }
 
-export type StudyActivity = "study" | "cram";
+export type StudyActivity = "study" | "cram" | "practical-research";
 
-/** One Study, Cram, Cram-fatigue, star-resolution, auto-advance, or skipped entry from a chat message. */
+/** One Study, Cram, Practical Research, Cram-fatigue, star-resolution, auto-advance, or skipped entry from a chat message. */
 export interface StudyEntry {
   id: string;
   activity: StudyActivity | "fatigue";
@@ -108,6 +108,7 @@ export interface StudyEntry {
   fromLevel?: number;
   level?: number;
   cap?: number;
+  note?: string;
 }
 
 /** Works out what applying an entry would change, without touching the actor. */
@@ -179,6 +180,7 @@ export function planStudy(state: AcademiaState, entry: StudyEntry) {
   }
   if (star) feats.push(featFor(starOption(branch.id)));
   const cram = entry.activity === "cram";
+  const study = entry.activity === "study";
   const notes = [
     `${BRANCHES[branch.id].label} ${branch.level} → ${result.state.level}`,
     ...(star ? ["starred for the next level-up"] : []),
@@ -186,12 +188,13 @@ export function planStudy(state: AcademiaState, entry: StudyEntry) {
     ...(cram
       ? [`DC ${CRAM_FLAT_DC} flat check against fatigue each day until the next Study`]
       : []),
-    ...(cramFatigue && !cram ? ["clears Cram fatigue"] : []),
+    ...(cramFatigue && study ? ["clears Cram fatigue"] : []),
+    ...(entry.note ? [entry.note] : []),
   ];
   return {
     record: { degree: entry.degree, delta: result.delta, star, skip: result.skipNext },
     feats,
-    flags: { ...auto, skipNext: skipNext || result.skipNext, cramFatigue: cram },
+    flags: { ...auto, skipNext: skipNext || result.skipNext, cramFatigue: cram || (cramFatigue && !study) },
     summary: `${notes.join("; ")}.`,
   };
 }

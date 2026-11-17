@@ -52,14 +52,44 @@ export interface StudyUi {
 
 const KINDS: BranchKind[] = ["primary", "secondary"];
 export const STUDY_OPTION =
-  /^thousands:study:([\w-]+):(?:(fatigue)|(?:(study|cram):)?(primary|secondary))$/;
+  /^thousands:study:([\w-]+):(?:(fatigue)|(?:(study|cram|practical-research):)?(primary|secondary))$/;
+export const RESEARCH_NOTE_PREFIX = "thousands:research-note:";
 
-/** Roll option that marks a check as a Study or Cram roll; PF2e carries it over to rerolls. */
+/** Roll option that marks a check as a Study, Cram, or Practical Research roll; PF2e carries it over to rerolls. */
 export const studyOption = (id: string, activity: StudyActivity, kind: BranchKind) =>
   `thousands:study:${id}:${activity}:${kind}`;
 
+/** Roll option that carries an optional Practical Research unique-reward note on a check roll. */
+export const researchNoteOption = (note: string) =>
+  `${RESEARCH_NOTE_PREFIX}${encodeURIComponent(note)}`;
+
 /** Roll option that marks a flat check as a Cram daily fatigue roll. */
 export const fatigueOption = (id: string) => `thousands:study:${id}:fatigue`;
+
+export interface ResearchFlag {
+  id: string;
+  kind: BranchKind;
+  degree: DegreeOfSuccess;
+  check?: string;
+  dc?: number;
+  note?: string;
+}
+
+export interface ResearchPick {
+  actor: StudyActor;
+  kind: BranchKind;
+  skill?: string;
+  dc?: number;
+  outcome?: DegreeOfSuccess;
+  note?: string;
+}
+
+export interface ResearchUi {
+  pickResearch(actors: readonly StudyActor[]): Promise<ResearchPick | null>;
+  warn(text: string): void;
+  postResearch(actor: StudyActor, data: ResearchFlag): Promise<unknown>;
+  newId(): string;
+}
 
 export function parseStudyOption(option: string): Omit<StudyEntry, "degree"> | null {
   const match = STUDY_OPTION.exec(option);
@@ -177,4 +207,69 @@ export async function startStudy(actor: StudyActor, ui: StudyUi): Promise<void> 
       branches: { ...current.branches, [choice.kind]: { ...branch, ...next } },
     };
   }
+}
+
+function validateResearchActor(actor: StudyActor, ui: ResearchUi): AcademiaState | null {
+  const state = readState(actor);
+  if (!canDoActivity("practical-research", state.rank)) {
+    ui.warn(
+      `${actor.name} must hold Conversant or Lore-Speaker rank for Practical Research (current rank: ${state.rank}).`,
+    );
+    return null;
+  }
+  if (!state.branches.primary && !state.branches.secondary) {
+    ui.warn(`${actor.name} needs a branch feat for Practical Research.`);
+    return null;
+  }
+  return state;
+}
+
+/** Runs Practical Research: GM picks character, branch, check (skill+DC or direct outcome), and optional reward note. */
+export async function startResearch(
+  actors: StudyActor | readonly StudyActor[],
+  ui: ResearchUi,
+): Promise<void> {
+  const list = Array.isArray(actors) ? (actors as readonly StudyActor[]) : [actors as StudyActor];
+  if (list.length === 0) {
+    return ui.warn("Select a token or assign a character for Practical Research.");
+  }
+  if (list.length === 1 && !validateResearchActor(list[0]!, ui)) return;
+  const picked = await ui.pickResearch(list);
+  if (!picked) return;
+  const state = validateResearchActor(picked.actor, ui);
+  if (!state) return;
+  const branch = state.branches[picked.kind];
+  if (!branch) {
+    return ui.warn(`${picked.actor.name} has no ${picked.kind} branch feat.`);
+  }
+  const note = picked.note?.trim() || undefined;
+  const id = ui.newId();
+  const dc =
+    picked.dc !== undefined && Number.isFinite(picked.dc) && picked.dc > 0 ? picked.dc : undefined;
+  if (picked.outcome) {
+    const check = (picked.skill && picked.actor.skills[picked.skill]?.label) || picked.skill;
+    await ui.postResearch(picked.actor, {
+      id,
+      kind: picked.kind,
+      degree: picked.outcome,
+      ...(check ? { check } : {}),
+      ...(dc !== undefined ? { dc } : {}),
+      ...(note ? { note } : {}),
+    });
+    return;
+  }
+  const statistic = picked.skill ? picked.actor.skills[picked.skill] : undefined;
+  if (!statistic) {
+    return ui.warn("Choose a skill to roll or select an outcome to record.");
+  }
+  await statistic.roll({
+    dc: dc ?? dcForLevel(branch.level),
+    label: `Practical Research: ${BRANCHES[branch.id].label} (${statistic.label})`,
+    traits: ["downtime"],
+    extraRollOptions: [
+      studyOption(id, "practical-research", picked.kind),
+      ...(note ? [researchNoteOption(note)] : []),
+      "downtime",
+    ],
+  });
 }

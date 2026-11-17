@@ -4,7 +4,10 @@ import {
   AUTO_ADVANCE_MAX_CAP,
   BRANCHES,
   CRAM_FLAT_DC,
+  dcForLevel,
   resolveStarOnLevelUp,
+  type BranchKind,
+  type DegreeOfSuccess,
 } from "../rules/index.js";
 import {
   applyStudy,
@@ -16,8 +19,11 @@ import {
 import { describeEntry, entryFromMessage, type MessageLike } from "./chat.js";
 import {
   fatigueOption,
+  startResearch,
   startStudy,
   type CheckChoice,
+  type ResearchPick,
+  type ResearchUi,
   type StudyActor,
   type StudySetting,
   type StudyUi,
@@ -37,6 +43,7 @@ declare const ChatMessage: {
 };
 declare const game: {
   user: { id?: string; isGM: boolean; character?: StudyActor | null };
+  actors?: Iterable<StudyActor>;
   settings: {
     register(scope: string, key: string, config: object): void;
     get(scope: string, key: string): unknown;
@@ -52,18 +59,27 @@ declare const foundry: {
     sidebar?: {
       tabs?: {
         ChatLog?: {
-          CHAT_COMMANDS?: Record<string, { rgx: RegExp; fn: () => boolean }>;
+          CHAT_COMMANDS?: Record<string, { rgx: RegExp; fn: (...args: unknown[]) => boolean }>;
         };
       };
     };
   };
 };
 
-const STUDY_COMMAND = /^\s*\/study\s*$/i;
+const STUDY_COMMAND = /^\s*\/study(?:\s+(research))?\s*$/i;
 const previousLevels = new WeakMap<object, number>();
+const DEGREE_LABELS: Record<DegreeOfSuccess, string> = {
+  criticalSuccess: "Critical Success",
+  success: "Success",
+  failure: "Failure",
+  criticalFailure: "Critical Failure",
+};
 
-function runStudyCommand(): false {
-  void study();
+function runStudyCommand(_log?: unknown, text?: unknown, _data?: unknown, match?: unknown): false {
+  const sub =
+    (Array.isArray(match) ? (match[1] as string | undefined) : undefined) ??
+    (typeof text === "string" ? STUDY_COMMAND.exec(text)?.[1] : undefined);
+  void (sub ? research() : study());
   return false;
 }
 
@@ -95,7 +111,7 @@ export const STUDY_SETTINGS = {
   },
 } as const;
 
-const foundryUi: StudyUi = {
+const foundryUi: StudyUi & ResearchUi = {
   async pick(title, choices, allowed) {
     const options = choices.map(
       (c, i) => `<option value="${i}">${foundry.utils.escapeHTML(c.label)}</option>`,
@@ -119,6 +135,64 @@ const foundryUi: StudyUi = {
     const answer = result as { activity: StudyActivity; choice?: CheckChoice } | null;
     return answer?.choice ? { activity: answer.activity, choice: answer.choice } : null;
   },
+  async pickResearch(actors) {
+    const esc = (s: string) => foundry.utils.escapeHTML(s);
+    const actorOpts = actors.map((a, i) => `<option value="${i}">${esc(a.name)}</option>`);
+    const state = readState(actors[0]!);
+    const kindOpts = (["primary", "secondary"] as const)
+      .filter((k) => actors.length > 1 || state.branches[k])
+      .map((k) => {
+        const b = state.branches[k];
+        const label = actors.length === 1 && b ? `${k} (${BRANCHES[b.id].label} ${b.level})` : k;
+        return `<option value="${k}">${esc(label)}</option>`;
+      });
+    const skills = new Map(
+      actors.flatMap((a) => Object.values(a.skills).map((s) => [s.slug, s.label] as const)),
+    );
+    const skillOpts = [
+      ...[...skills].map(([slug, label]) => `<option value="${esc(slug)}">${esc(label)}</option>`),
+      `<option value="">(none)</option>`,
+    ];
+    const defaultDc = dcForLevel(
+      state.branches.primary?.level ?? state.branches.secondary?.level ?? 0,
+    );
+    const outcomeOpts = [
+      `<option value="">Roll check</option>`,
+      ...(Object.entries(DEGREE_LABELS) as [DegreeOfSuccess, string][]).map(
+        ([deg, label]) => `<option value="${deg}">${label}</option>`,
+      ),
+    ];
+    const val = (b: PickButton, name: string) => b.form.elements.namedItem(name)?.value ?? "";
+    const result = await foundry.applications.api.DialogV2.wait({
+      window: { title: "Practical Research" },
+      content: [
+        `<label>Character <select name="actor">${actorOpts.join("")}</select></label>`,
+        `<label>Branch <select name="kind">${kindOpts.join("")}</select></label>`,
+        `<label>Skill <select name="skill">${skillOpts.join("")}</select></label>`,
+        `<label>DC <input type="number" name="dc" value="${defaultDc}" min="1"></label>`,
+        `<label>Outcome <select name="outcome">${outcomeOpts.join("")}</select></label>`,
+        `<label>Reward note <input type="text" name="note"></label>`,
+      ].join(""),
+      buttons: [
+        {
+          action: "research",
+          label: "Practical Research",
+          callback: (_event: unknown, b: PickButton): ResearchPick | null => {
+            const actor = actors[Number(val(b, "actor"))];
+            const kind = val(b, "kind") as BranchKind;
+            if (!actor || (kind !== "primary" && kind !== "secondary")) return null;
+            const skill = val(b, "skill") || undefined;
+            const dc = Number(val(b, "dc")) || undefined;
+            const outcome = (val(b, "outcome") || undefined) as DegreeOfSuccess | undefined;
+            const note = val(b, "note").trim() || undefined;
+            return { actor, kind, skill, dc, outcome, note };
+          },
+        },
+      ],
+      rejectClose: false,
+    });
+    return (result as ResearchPick | null) ?? null;
+  },
   warn: (text) => ui.notifications.warn(text),
   postSkip: (actor, id) =>
     ChatMessage.create({
@@ -126,6 +200,18 @@ const foundryUi: StudyUi = {
       content: `<p>${foundry.utils.escapeHTML(actor.name)} must skip this Study opportunity after a critical failure.</p>`,
       flags: { [MODULE_ID]: { skip: id } },
     }),
+  postResearch: (actor, data) => {
+    const branchId = readState(actor).branches[data.kind]?.id;
+    const branchLabel = branchId ? BRANCHES[branchId].label : data.kind;
+    const checkParts = [data.check, data.dc ? `DC ${data.dc}` : ""].filter(Boolean).join(" ");
+    const check = checkParts ? ` (${foundry.utils.escapeHTML(checkParts)})` : "";
+    const note = data.note ? ` — ${foundry.utils.escapeHTML(data.note)}` : "";
+    return ChatMessage.create({
+      speaker: ChatMessage.getSpeaker({ actor }),
+      content: `<p>${foundry.utils.escapeHTML(actor.name)} completes Practical Research for ${foundry.utils.escapeHTML(branchLabel)}${check}: ${DEGREE_LABELS[data.degree]}${note}.</p>`,
+      flags: { [MODULE_ID]: { research: data } },
+    });
+  },
   setting: (key: StudySetting) =>
     (game.settings.get(MODULE_ID, key) ?? STUDY_SETTINGS[key].default) === true,
   newId: () => foundry.utils.randomID(),
@@ -136,6 +222,26 @@ export async function study(actor?: StudyActor | null): Promise<void> {
   const target = actor ?? canvas.tokens?.controlled[0]?.actor ?? game.user.character;
   if (!target) return ui.notifications.warn("Select a token or assign a character to Study.");
   await startStudy(target, foundryUi);
+}
+
+/** Starts Practical Research (GM only) for the given actor, selected token, or world characters. */
+export async function research(actor?: StudyActor | null): Promise<void> {
+  if (!game.user.isGM) {
+    return ui.notifications.warn("Only the GM can record Practical Research.");
+  }
+  const selected = canvas.tokens?.controlled[0]?.actor ?? game.user.character ?? null;
+  const candidates = actor
+    ? [actor]
+    : [
+        ...(selected ? [selected] : []),
+        ...[...(game.actors ?? [])].filter(
+          (a) => (!a.type || a.type === "character") && a !== selected,
+        ),
+      ];
+  if (candidates.length === 0) {
+    return ui.notifications.warn("Select a token or assign a character for Practical Research.");
+  }
+  await startResearch(candidates, foundryUi);
 }
 
 /** On a character level increase, posts a GM-applied card for auto-advance or each resolved star. */
@@ -233,14 +339,15 @@ export function registerStudy(): void {
     game.settings.register(MODULE_ID, key, { ...setting, scope: "world", config: true });
   }
   const module = game.modules.get(MODULE_ID);
-  if (module) module.api = { study };
+  if (module) module.api = { study, research };
   if (typeof foundry !== "undefined") {
     const commands = foundry.applications?.sidebar?.tabs?.ChatLog?.CHAT_COMMANDS;
     if (commands) commands.study = { rgx: STUDY_COMMAND, fn: runStudyCommand };
   }
   Hooks.on("chatMessage", (_log: unknown, text: string) => {
     const plain = text.trim().replace(/^<p>|<\/p>$/gi, "");
-    return STUDY_COMMAND.test(plain) ? runStudyCommand() : true;
+    const match = STUDY_COMMAND.exec(plain);
+    return match ? runStudyCommand(_log, plain, undefined, match) : true;
   });
   Hooks.on("renderChatMessageHTML", (message: MessageLike, html: HTMLElement) => {
     renderStudyCard(message, html, game.user.isGM);

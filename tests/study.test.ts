@@ -5,14 +5,19 @@ import {
   STUDY_SETTINGS,
   promptCramFatigue,
   registerStudy,
+  research,
   resolveActorLevelUp,
   study,
 } from "../src/study/foundry.js";
 import {
   fatigueOption,
+  researchNoteOption,
+  startResearch,
   startStudy,
   studyOption,
   type AllowedActivities,
+  type ResearchFlag,
+  type ResearchPick,
   type StatisticLike,
   type StudySetting,
   type StudyUi,
@@ -933,5 +938,207 @@ describe("automatic triggers", () => {
       done: true,
     });
     expect(await applyStudy(flagged, successEntry)).toBe(false);
+  });
+});
+
+describe("Practical Research", () => {
+  function makeResearchUi(
+    pickResult: (Omit<ResearchPick, "actor"> & { actor?: ReturnType<typeof makeActor> }) | null,
+  ) {
+    const ui = {
+      posted: [] as ResearchFlag[],
+      warn: vi.fn(),
+      newId: () => "pr-1",
+      pickResearch: vi.fn(async (actors: readonly ReturnType<typeof makeActor>[]) =>
+        pickResult ? { actor: pickResult.actor ?? actors[0]!, ...pickResult } : null,
+      ),
+      postResearch: vi.fn(async (_actor: unknown, data: ResearchFlag) => {
+        ui.posted.push(data);
+      }),
+    };
+    return ui;
+  }
+
+  it("enforces the Conversant / Lore-Speaker rank gate and branch requirement", async () => {
+    for (const rank of ["initiate", "attendant"] as const) {
+      const ui = makeResearchUi({ kind: "primary", outcome: "success" });
+      await startResearch(makeActor(2, 1, rank), ui);
+      expect(ui.pickResearch).not.toHaveBeenCalled();
+      expect(ui.warn).toHaveBeenCalledWith(
+        `Tester must hold Conversant or Lore-Speaker rank for Practical Research (current rank: ${rank}).`,
+      );
+    }
+
+    const initiate = makeActor(2, 1, "initiate");
+    const multiUi = makeResearchUi({ actor: initiate, kind: "primary", outcome: "success" });
+    await startResearch([makeActor(2, 1, "conversant"), initiate], multiUi);
+    expect(multiUi.warn).toHaveBeenCalledOnce();
+    expect(multiUi.posted).toHaveLength(0);
+
+    const branchless = makeActor(0, 0, "conversant");
+    branchless.items = branchless.items.filter((i) => i.system.slug?.includes("rank"));
+    const noBranchUi = makeResearchUi({ kind: "primary", outcome: "success" });
+    await startResearch(branchless, noBranchUi);
+    expect(noBranchUi.warn).toHaveBeenCalledWith(
+      "Tester needs a branch feat for Practical Research.",
+    );
+
+    const emptyUi = makeResearchUi(null);
+    await startResearch([], emptyUi);
+    expect(emptyUi.warn).toHaveBeenCalledWith(
+      "Select a token or assign a character for Practical Research.",
+    );
+  });
+
+  it("rolls a skill check at the GM-stated DC or records a direct outcome with an optional reward note", async () => {
+    for (const rank of ["conversant", "lore-speaker"] as const) {
+      const actor = makeActor(2, 1, rank);
+      // prettier-ignore
+      const rollUi = makeResearchUi({ kind: "primary", skill: "arcana", dc: 24, note: "  Unmistakable Lore  " });
+      await startResearch(actor, rollUi);
+      expect(actor.skills.arcana?.roll).toHaveBeenCalledWith({
+        dc: 24,
+        label: "Practical Research: Uzunjati (arcana)",
+        traits: ["downtime"],
+        extraRollOptions: [
+          studyOption("pr-1", "practical-research", "primary"),
+          researchNoteOption("Unmistakable Lore"),
+          "downtime",
+        ],
+      });
+    }
+
+    const actor = makeActor(2, 1, "conversant");
+    // prettier-ignore
+    const directUi = makeResearchUi({ kind: "secondary", skill: "crafting", dc: 22, outcome: "criticalSuccess", note: "Granted lore tome" });
+    await startResearch(actor, directUi);
+    // prettier-ignore
+    expect(directUi.posted).toEqual([{ id: "pr-1", kind: "secondary", degree: "criticalSuccess", check: "crafting", dc: 22, note: "Granted lore tome" }]);
+
+    const missingSkillUi = makeResearchUi({ kind: "primary" });
+    await startResearch(actor, missingSkillUi);
+    expect(missingSkillUi.warn).toHaveBeenCalledWith(
+      "Choose a skill to roll or select an outcome to record.",
+    );
+  });
+
+  it("applies outcomes per degree of success, respects idempotency and star carry-over, and records reward notes without mechanics", async () => {
+    // prettier-ignore
+    const outcomes: [DegreeOfSuccess, number, boolean, string][] = [
+      ["criticalSuccess", 4, false, "Uzunjati 2 → 4; Unique reward."],
+      ["success", 3, false, "Uzunjati 2 → 3; Unique reward."],
+      ["failure", 2, false, "Uzunjati 2 → 2; Unique reward."],
+      ["criticalFailure", 2, true, "Uzunjati 2 → 2; must skip the next Study opportunity; Unique reward."],
+    ];
+    for (const [degree, expectedLevel, expectedSkip, expectedText] of outcomes) {
+      const actor = makeActor(2, 1, "conversant");
+      actor.flag = { cramFatigue: true };
+      const research = { id: "pr-deg", kind: "primary", degree, note: "Unique reward" };
+      const prEntry = entryFromMessage({
+        actor,
+        flags: { thousands: { research } },
+        update: async () => undefined,
+      })!;
+      // prettier-ignore
+      expect(prEntry).toEqual({ id: "pr-deg", activity: "practical-research", kind: "primary", degree, note: "Unique reward" });
+      expect(describeEntry(actor, prEntry)).toEqual({ text: expectedText, done: false });
+      expect(await applyStudy(actor, prEntry)).toBe(true);
+      // prettier-ignore
+      expect(readState(actor).branches.primary).toEqual({ id: "uzunjati", level: expectedLevel, starred: false });
+      expect(actor.flag).toMatchObject({ skipNext: expectedSkip, cramFatigue: true });
+      expect(describeEntry(actor, prEntry)).toEqual({
+        text: `applied (+${expectedLevel - 2} branch level; Unique reward).`,
+        done: true,
+      });
+      expect(await applyStudy(actor, prEntry)).toBe(false);
+      expect(primaryLevel(actor)).toBe(expectedLevel);
+    }
+
+    // Star carry-over: criticalSuccess 1 below cap stars the branch, and level-up resolves the star.
+    const capActor = makeActor(5, 2, "lore-speaker");
+    const starOptions = [
+      studyOption("pr-star", "practical-research", "primary"),
+      researchNoteOption("Bonus lore"),
+    ];
+    const starEntry = entryFromMessage({
+      actor: capActor,
+      flags: { pf2e: { context: { options: starOptions, outcome: "criticalSuccess" } } },
+      update: async () => undefined,
+    })!;
+    expect(describeEntry(capActor, starEntry)).toEqual({
+      text: "Uzunjati 5 → 6; starred for the next level-up; Bonus lore.",
+      done: false,
+    });
+    expect(await applyStudy(capActor, starEntry)).toBe(true);
+    // prettier-ignore
+    expect(readState(capActor).branches.primary).toEqual({ id: "uzunjati", level: 6, starred: true });
+    expect(await applyStudy(capActor, starEntry)).toBe(false);
+
+    // Reroll / outcome change replaces the applied result and removes the star.
+    expect(await applyStudy(capActor, { ...starEntry, degree: "failure" })).toBe(true);
+    // prettier-ignore
+    expect(readState(capActor).branches.primary).toEqual({ id: "uzunjati", level: 5, starred: false });
+
+    // Re-apply criticalSuccess to star again, then resolve on level-up to 7.
+    expect(await applyStudy(capActor, starEntry)).toBe(true);
+    capActor.level = 7;
+    // prettier-ignore
+    expect(await applyStudy(capActor, { id: "lvl-7", activity: "study", kind: "primary", degree: "starred", level: 7 })).toBe(true);
+    // prettier-ignore
+    expect(readState(capActor).branches.primary).toEqual({ id: "uzunjati", level: 7, starred: false });
+  });
+
+  it("handles /study research and api.research() for the GM and posts the Apply card", async () => {
+    const actor = makeActor(2, 1, "conversant");
+    const created: { content: string; flags: Record<string, Record<string, unknown>> }[] = [];
+    const hooks: Record<string, ((...args: unknown[]) => unknown)[]> = {};
+    const warn = vi.fn();
+    const mod: { api?: { study?: typeof study; research?: typeof research } } = {};
+    const user = { isGM: false, character: null as typeof actor | null };
+    // prettier-ignore
+    const fields: Record<string, string> = { actor: "0", kind: "primary", skill: "arcana", dc: "24", outcome: "success", note: "Archive access" };
+    // prettier-ignore
+    const wait = vi.fn(async (config: { buttons: { action: string; callback: (e: unknown, b: { form: { elements: { namedItem(n: string): { value: string } | null } } }) => unknown }[] }) =>
+      config.buttons.find((b) => b.action === "research")!.callback(null, { form: { elements: { namedItem: (name: string) => ({ value: fields[name] ?? "" }) } } }),
+    );
+
+    vi.stubGlobal("game", {
+      user,
+      actors: [actor],
+      settings: { register: vi.fn(), get: () => true },
+      modules: { get: () => mod },
+    });
+    vi.stubGlobal("canvas", { tokens: { controlled: [] } });
+    vi.stubGlobal("ui", { notifications: { warn } });
+    vi.stubGlobal("ChatMessage", {
+      create: vi.fn(async (data: (typeof created)[number]) => created.push(data)),
+      getSpeaker: () => ({ alias: "Tester" }),
+    });
+    vi.stubGlobal("foundry", {
+      utils: { randomID: () => "res-1", escapeHTML: (s: string) => s },
+      applications: { api: { DialogV2: { wait } } },
+    });
+    vi.stubGlobal("Hooks", {
+      on: (name: string, fn: (...args: unknown[]) => unknown) => {
+        (hooks[name] ??= []).push(fn);
+      },
+    });
+
+    registerStudy();
+    expect(mod.api?.research).toBe(research);
+
+    await research(actor);
+    expect(warn).toHaveBeenCalledWith("Only the GM can record Practical Research.");
+    expect(wait).not.toHaveBeenCalled();
+
+    user.isGM = true;
+    expect(hooks.chatMessage?.[0]?.({}, "<p>/study research</p>")).toBe(false);
+    await vi.waitFor(() => expect(created).toHaveLength(1));
+    // prettier-ignore
+    expect(created[0]).toEqual({
+      speaker: { alias: "Tester" },
+      content: "<p>Tester completes Practical Research for Uzunjati (arcana DC 24): Success — Archive access.</p>",
+      flags: { thousands: { research: { id: "res-1", kind: "primary", degree: "success", check: "arcana", dc: 24, note: "Archive access" } } },
+    });
   });
 });
