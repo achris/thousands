@@ -1,8 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DegreeOfSuccess, Rank } from "../src/rules/index.js";
 import { describeEntry, entryFromMessage, type MessageLike } from "../src/study/chat.js";
-import { registerStudy, study } from "../src/study/foundry.js";
 import {
+  promptCramFatigue,
+  registerStudy,
+  resolveActorLevelUp,
+  study,
+} from "../src/study/foundry.js";
+import {
+  fatigueOption,
   startStudy,
   studyOption,
   type AllowedActivities,
@@ -64,6 +70,8 @@ function makeActor(top: number, secondaryTop = 0, rank?: Rank) {
     deleteEmbeddedDocuments: async (_type: "Item", ids: string[]) => {
       actor.items = actor.items.filter((item) => !ids.includes(item.id));
     },
+    increaseCondition: vi.fn(async () => undefined),
+    decreaseCondition: vi.fn(async () => undefined),
   };
   return actor;
 }
@@ -562,5 +570,203 @@ describe("reading a result from chat", () => {
       "Academia: the result changed; Apply replaces the old one.",
       "Apply",
     ]);
+  });
+});
+
+describe("automatic triggers", () => {
+  it("fires star resolution only on a level increase and applies idempotently", async () => {
+    const actor = makeActor(5, 2);
+    actor.level = 5;
+    await applyStudy(actor, entry("criticalSuccess", { id: "s-pri" }));
+    await applyStudy(actor, entry("success", { id: "s-sec", kind: "secondary" }));
+    expect(readState(actor).branches).toEqual({
+      primary: { id: "uzunjati", level: 5, starred: true },
+      secondary: { id: "cascade-bearers", level: 2, starred: true },
+    });
+
+    const created: { content: string; flags: Record<string, Record<string, unknown>> }[] = [];
+    const hooks: Record<string, ((...args: unknown[]) => unknown)[]> = {};
+    let nextId = 1;
+    vi.stubGlobal("game", {
+      user: { id: "u1", isGM: true },
+      settings: { register: vi.fn(), get: () => true },
+      modules: { get: () => ({}) },
+    });
+    vi.stubGlobal("ChatMessage", {
+      create: vi.fn(async (data: (typeof created)[number]) => created.push(data)),
+      getSpeaker: () => ({ alias: "Tester" }),
+    });
+    vi.stubGlobal("foundry", {
+      utils: { randomID: () => `lvl-${nextId++}`, escapeHTML: (s: string) => s },
+    });
+    vi.stubGlobal("Hooks", {
+      on: (name: string, fn: (...args: unknown[]) => unknown) => {
+        (hooks[name] ??= []).push(fn);
+      },
+    });
+    registerStudy();
+
+    const updateLevel = async (level: number, userId = "u1") => {
+      hooks.preUpdateActor?.[0]?.(actor);
+      actor.level = level;
+      await resolveActorLevelUp(
+        actor,
+        { system: { details: { level: { value: level } } } },
+        userId,
+      );
+    };
+
+    // Unchanged level, lower level, non-level update, other user, or non-character do not fire.
+    await resolveActorLevelUp(actor, {});
+    await updateLevel(5);
+    await updateLevel(4);
+    await updateLevel(5);
+    await resolveActorLevelUp(actor, { system: { details: { level: { value: 6 } } } }, "other");
+    await resolveActorLevelUp(
+      { ...actor, type: "npc", level: 6 },
+      { system: { details: { level: { value: 6 } } } },
+    );
+    expect(created).toHaveLength(0);
+
+    // Odd level-up (4 -> 5 on a fresh starred secondary at cap 2) resolves primary only, not secondary.
+    const oddActor = makeActor(4, 2);
+    oddActor.level = 4;
+    await applyStudy(oddActor, entry("criticalSuccess", { id: "o-sec", kind: "secondary" }));
+    expect(readState(oddActor).branches.secondary).toEqual({
+      id: "cascade-bearers",
+      level: 2,
+      starred: true,
+    });
+    hooks.preUpdateActor?.[0]?.(oddActor);
+    oddActor.level = 5;
+    await resolveActorLevelUp(oddActor, { system: { details: { level: { value: 5 } } } });
+    expect(created).toHaveLength(0);
+
+    // Even level-up (5 -> 6) resolves both starred primary (5 -> 6) and secondary (2 -> 3).
+    hooks.updateActor?.[0]?.(actor, { system: { details: { level: { value: 6 } } } }, {}, "u1");
+    await vi.waitFor(() => expect(created).toHaveLength(2));
+    expect(created[0]?.content).toContain("reaches level 6 and resolves the Uzunjati branch star");
+    expect(created[1]?.content).toContain(
+      "reaches level 6 and resolves the Cascade Bearers branch star",
+    );
+
+    const priEntry = entryFromMessage({
+      flags: created[0]!.flags,
+      update: async () => undefined,
+    })!;
+    const secEntry = entryFromMessage({
+      flags: created[1]!.flags,
+      update: async () => undefined,
+    })!;
+    expect(describeEntry(actor, priEntry)).toEqual({
+      text: "Uzunjati 5 → 6 (star resolved on level-up).",
+      done: false,
+    });
+    expect(describeEntry(actor, secEntry)).toEqual({
+      text: "Cascade Bearers 2 → 3 (star resolved on level-up).",
+      done: false,
+    });
+
+    expect(await applyStudy(actor, priEntry)).toBe(true);
+    expect(await applyStudy(actor, secEntry)).toBe(true);
+    expect(readState(actor).branches).toEqual({
+      primary: { id: "uzunjati", level: 6, starred: false },
+      secondary: { id: "cascade-bearers", level: 3, starred: false },
+    });
+    expect(describeEntry(actor, priEntry)).toEqual({
+      text: "applied (+1 branch level).",
+      done: true,
+    });
+
+    // Applying a second time (or with a new entry id after the star is gone) is a no-op.
+    expect(await applyStudy(actor, priEntry)).toBe(false);
+    expect(await applyStudy(actor, { ...priEntry, id: "other-id" })).toBe(false);
+    expect(readState(actor).branches.primary).toEqual({
+      id: "uzunjati",
+      level: 6,
+      starred: false,
+    });
+  });
+
+  it("prompts the DC 8 flat check on Rest for the Night only for flagged characters and applies idempotently", async () => {
+    const unflagged = makeActor(2);
+    const flagged = makeActor(2);
+    await applyStudy(flagged, entry("success", { id: "c-1", activity: "cram" }));
+    expect(flagged.flag.cramFatigue).toBe(true);
+
+    const created: { content: string; flags: Record<string, Record<string, unknown>> }[] = [];
+    const hooks: Record<string, ((...args: unknown[]) => unknown)[]> = {};
+    vi.stubGlobal("game", {
+      user: { isGM: true },
+      settings: { register: vi.fn(), get: () => true },
+      modules: { get: () => ({}) },
+    });
+    vi.stubGlobal("ChatMessage", {
+      create: vi.fn(async (data: (typeof created)[number]) => created.push(data)),
+      getSpeaker: () => ({ alias: "Tester" }),
+    });
+    vi.stubGlobal("foundry", {
+      utils: { randomID: () => "fat-1", escapeHTML: (s: string) => s },
+    });
+    vi.stubGlobal("Hooks", {
+      on: (name: string, fn: (...args: unknown[]) => unknown) => {
+        (hooks[name] ??= []).push(fn);
+      },
+    });
+    registerStudy();
+
+    await promptCramFatigue(unflagged);
+    await promptCramFatigue({ ...flagged, type: "npc" });
+    expect(created).toHaveLength(0);
+
+    hooks["pf2e.restForTheNight"]?.[0]?.(flagged);
+    await vi.waitFor(() => expect(created).toHaveLength(1));
+    expect(created[0]?.content).toContain(`@Check[flat|dc:8|options:${fatigueOption("fat-1")}]`);
+    expect(
+      entryFromMessage({ flags: created[0]!.flags, update: async () => undefined }),
+    ).toBeNull();
+
+    // Flat check roll message carries the fatigue option (or message flag) and outcome.
+    const failMsg: MessageLike = {
+      actor: flagged,
+      flags: { pf2e: { context: { options: [fatigueOption("fat-1")], outcome: "failure" } } },
+      update: async () => undefined,
+    };
+    const failEntry = entryFromMessage(failMsg)!;
+    expect(failEntry).toEqual({ id: "fat-1", activity: "fatigue", degree: "failure" });
+    expect(describeEntry(flagged, failEntry)).toEqual({
+      text: "fatigued for the day after Cram.",
+      done: false,
+    });
+
+    expect(await applyStudy(flagged, failEntry)).toBe(true);
+    expect(flagged.increaseCondition).toHaveBeenCalledTimes(1);
+    expect(flagged.increaseCondition).toHaveBeenCalledWith("fatigued");
+    expect(flagged.flag.cramFatigue).toBe(true);
+    expect(describeEntry(flagged, failEntry)).toEqual({
+      text: "applied (fatigued).",
+      done: true,
+    });
+
+    // Idempotent on second apply.
+    expect(await applyStudy(flagged, failEntry)).toBe(false);
+    expect(flagged.increaseCondition).toHaveBeenCalledTimes(1);
+
+    // Reroll to success replaces the failed outcome and removes Fatigued.
+    const successEntry = entryFromMessage({
+      flags: { thousands: { fatigue: "fat-1" }, pf2e: { context: { outcome: "success" } } },
+      update: async () => undefined,
+    })!;
+    expect(describeEntry(flagged, successEntry)).toEqual({
+      text: "the result changed; Apply replaces the old one.",
+      done: false,
+    });
+    expect(await applyStudy(flagged, successEntry)).toBe(true);
+    expect(flagged.decreaseCondition).toHaveBeenCalledWith("fatigued");
+    expect(describeEntry(flagged, successEntry)).toEqual({
+      text: "applied (no fatigue).",
+      done: true,
+    });
+    expect(await applyStudy(flagged, successEntry)).toBe(false);
   });
 });

@@ -51,7 +51,11 @@ With the character's token selected (or as the player assigned to it), type `/st
 **Study** or **Cram** (enabled when a branch is at least 2 levels below its cap); Cram prompts a
 second check using the branch level the first check would reach. Each check's chat message shows the
 change it would make, and the GM clicks **Apply** to grant the benefit feats, branch star, skip
-flag, and Cram fatigue flag (cleared on the character's next Study). Two GM world settings under
+flag, and Cram fatigue flag (cleared on the character's next Study). When a character's level rises,
+each starred branch whose cap increases posts a chat card for the GM to **Apply** (granting the new
+branch level benefit feat and removing the `Branch Star` feat). After PF2e's **Rest for the Night**,
+any character carrying the Cram fatigue flag receives a `@Check[flat|dc:8]` chat prompt whose roll
+card lets the GM **Apply** the `Fatigued` condition on a failure. Two GM world settings under
 **Configure Settings** control whether both Cram checks require a branch 2+ levels below its cap and
 whether a critical-failure skip also consumes a Cram opportunity (both default to on).
 

@@ -51,19 +51,24 @@ export interface StudyUi {
 }
 
 const KINDS: BranchKind[] = ["primary", "secondary"];
-export const STUDY_OPTION = /^thousands:study:([\w-]+):(?:(study|cram):)?(primary|secondary)$/;
+export const STUDY_OPTION =
+  /^thousands:study:([\w-]+):(?:(fatigue)|(?:(study|cram):)?(primary|secondary))$/;
 
 /** Roll option that marks a check as a Study or Cram roll; PF2e carries it over to rerolls. */
 export const studyOption = (id: string, activity: StudyActivity, kind: BranchKind) =>
   `thousands:study:${id}:${activity}:${kind}`;
 
+/** Roll option that marks a flat check as a Cram daily fatigue roll. */
+export const fatigueOption = (id: string) => `thousands:study:${id}:fatigue`;
+
 export function parseStudyOption(option: string): Omit<StudyEntry, "degree"> | null {
   const match = STUDY_OPTION.exec(option);
   if (!match) return null;
+  if (match[2] === "fatigue") return { id: match[1]!, activity: "fatigue" };
   return {
     id: match[1]!,
-    activity: (match[2] ?? "study") as StudyActivity,
-    kind: match[3] as BranchKind,
+    activity: (match[3] ?? "study") as StudyActivity,
+    kind: match[4] as BranchKind,
   };
 }
 

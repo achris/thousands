@@ -7,6 +7,7 @@ import {
   MAX_BRANCH_LEVEL,
   RANKS,
   applyStudyOutcome,
+  resolveStarOnLevelUp,
   type BranchId,
   type BranchKind,
   type BranchState,
@@ -14,9 +15,11 @@ import {
   type Rank,
 } from "../rules/index.js";
 
+export type AppliedDegree = DegreeOfSuccess | "skipped" | "starred";
+
 /** What an applied result changed, kept so a second Apply or a reroll cannot stack. */
 export interface AppliedRecord {
-  degree: DegreeOfSuccess | "skipped";
+  degree: AppliedDegree;
   delta: number;
   star: boolean;
   skip: boolean;
@@ -32,12 +35,15 @@ export type StudyFlags = {
 export type ItemLike = { id: string; system: { slug?: string | null } };
 
 export interface ActorLike {
+  type?: string;
   level: number;
   items: Iterable<ItemLike>;
   getFlag(scope: string, key: string): unknown;
   setFlag(scope: string, key: string, value: unknown): Promise<unknown>;
   createEmbeddedDocuments(type: "Item", sources: object[]): Promise<unknown>;
   deleteEmbeddedDocuments(type: "Item", ids: string[]): Promise<unknown>;
+  increaseCondition?(slug: "fatigued"): Promise<unknown>;
+  decreaseCondition?(slug: "fatigued"): Promise<unknown>;
 }
 
 export interface AcademiaState {
@@ -89,12 +95,13 @@ export function readState(actor: ActorLike): AcademiaState {
 
 export type StudyActivity = "study" | "cram";
 
-/** One Study or Cram check (or one skipped opportunity) as read back from its chat message. */
+/** One Study, Cram, Cram-fatigue, star-resolution, or skipped entry from a chat message. */
 export interface StudyEntry {
   id: string;
-  activity: StudyActivity;
+  activity: StudyActivity | "fatigue";
   kind?: BranchKind;
-  degree: DegreeOfSuccess | "skipped";
+  degree: AppliedDegree;
+  level?: number;
 }
 
 /** Works out what applying an entry would change, without touching the actor. */
@@ -108,8 +115,31 @@ export function planStudy(state: AcademiaState, entry: StudyEntry) {
       summary: "this opportunity is skipped and the pending skip is cleared.",
     };
   }
+  if (entry.activity === "fatigue") {
+    const failed = entry.degree === "failure" || entry.degree === "criticalFailure";
+    return {
+      record: { degree: entry.degree, delta: 0, star: false, skip: false },
+      feats: [] as PF2eFeatSource[],
+      flags: { skipNext, cramFatigue },
+      summary: failed ? "fatigued for the day after Cram." : "avoids Cram fatigue for the day.",
+    };
+  }
   const branch = entry.kind && state.branches[entry.kind];
   if (!entry.kind || !branch) throw new Error(`The character has no ${entry.kind} branch feat.`);
+  if (entry.degree === "starred") {
+    const next = resolveStarOnLevelUp(branch, entry.kind, entry.level ?? state.characterLevel);
+    const delta = Math.max(0, next.level - branch.level);
+    const feats: PF2eFeatSource[] = [];
+    for (let level = branch.level + 1; level <= next.level; level++) {
+      feats.push(featFor(levelOption(branch.id, level)));
+    }
+    return {
+      record: { degree: "starred" as const, delta, star: false, skip: false },
+      feats,
+      flags: { skipNext, cramFatigue },
+      summary: `${BRANCHES[branch.id].label} ${branch.level} → ${next.level} (star resolved on level-up).`,
+    };
+  }
   const result = applyStudyOutcome(branch, entry.kind, state.characterLevel, entry.degree);
   const star = result.starred && !branch.starred;
   const feats: PF2eFeatSource[] = [];
@@ -140,7 +170,15 @@ export async function applyStudy(actor: ActorLike, entry: StudyEntry): Promise<b
   let state = readState(actor);
   const previous = state.flags.applied?.[entry.id];
   if (previous?.degree === entry.degree) return false;
+  if (entry.degree === "starred" && entry.kind && !state.branches[entry.kind]?.starred)
+    return false;
   if (previous) {
+    if (
+      entry.activity === "fatigue" &&
+      (previous.degree === "failure" || previous.degree === "criticalFailure")
+    ) {
+      await actor.decreaseCondition?.("fatigued");
+    }
     const branch = entry.kind && state.branches[entry.kind];
     const options = branch
       ? Array.from({ length: previous.delta }, (_, i) => levelOption(branch.id, branch.level - i))
@@ -152,6 +190,17 @@ export async function applyStudy(actor: ActorLike, entry: StudyEntry): Promise<b
     if (previous.skip) state.flags = { ...state.flags, skipNext: false };
   }
   const { feats, flags, record } = planStudy(state, entry);
+  if (entry.degree === "starred" && entry.kind) {
+    const branch = state.branches[entry.kind];
+    const starId = branch && ownedItem(actor, starOption(branch.id))?.id;
+    if (starId) await actor.deleteEmbeddedDocuments("Item", [starId]);
+  }
+  if (
+    entry.activity === "fatigue" &&
+    (entry.degree === "failure" || entry.degree === "criticalFailure")
+  ) {
+    await actor.increaseCondition?.("fatigued");
+  }
   const sources = feats.map((feat) => structuredClone(feat));
   if (sources.length > 0) await actor.createEmbeddedDocuments("Item", sources);
   const applied = { ...state.flags.applied, [entry.id]: record };

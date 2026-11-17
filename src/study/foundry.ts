@@ -1,7 +1,9 @@
 import { MODULE_ID } from "../constants.js";
-import { applyStudy, type StudyActivity } from "./academia.js";
+import { BRANCHES, CRAM_FLAT_DC, resolveStarOnLevelUp } from "../rules/index.js";
+import { applyStudy, readState, type StudyActivity } from "./academia.js";
 import { describeEntry, entryFromMessage, type MessageLike } from "./chat.js";
 import {
+  fatigueOption,
   startStudy,
   type CheckChoice,
   type StudyActor,
@@ -12,13 +14,17 @@ import {
 type Hook = (...args: never[]) => unknown;
 type PickButton = { form: { elements: { namedItem(name: string): { value: string } | null } } };
 
+export interface ActorUpdateChanges {
+  system?: { details?: { level?: { value?: number } } };
+}
+
 declare const Hooks: { on(hook: string, callback: Hook): number };
 declare const ChatMessage: {
   create(data: object): Promise<unknown>;
   getSpeaker(options: { actor: unknown }): object;
 };
 declare const game: {
-  user: { isGM: boolean; character?: StudyActor | null };
+  user: { id?: string; isGM: boolean; character?: StudyActor | null };
   settings: {
     register(scope: string, key: string, config: object): void;
     get(scope: string, key: string): unknown;
@@ -42,6 +48,7 @@ declare const foundry: {
 };
 
 const STUDY_COMMAND = /^\s*\/study\s*$/i;
+const previousLevels = new WeakMap<object, number>();
 
 function runStudyCommand(): false {
   void study();
@@ -101,6 +108,48 @@ export async function study(actor?: StudyActor | null): Promise<void> {
   await startStudy(target, foundryUi);
 }
 
+/** On a character level increase, posts a GM-applied card for each starred branch that resolves. */
+export async function resolveActorLevelUp(
+  actor: StudyActor,
+  changed: ActorUpdateChanges,
+  userId?: string,
+): Promise<void> {
+  if (userId && game.user.id && userId !== game.user.id) return;
+  if (actor.type && actor.type !== "character") return;
+  const newLevel = changed.system?.details?.level?.value;
+  if (typeof newLevel !== "number") return;
+  const prevLevel = actor.level === newLevel ? previousLevels.get(actor) : actor.level;
+  if (actor.level === newLevel) previousLevels.set(actor, newLevel);
+  if (prevLevel !== undefined && newLevel <= prevLevel) return;
+
+  const state = readState(actor);
+  for (const kind of ["primary", "secondary"] as const) {
+    const branch = state.branches[kind];
+    if (!branch?.starred) continue;
+    const next = resolveStarOnLevelUp(branch, kind, newLevel);
+    if (next.level <= branch.level) continue;
+    const id = foundry.utils.randomID();
+    await ChatMessage.create({
+      speaker: ChatMessage.getSpeaker({ actor }),
+      content: `<p>${foundry.utils.escapeHTML(actor.name)} reaches level ${newLevel} and resolves the ${foundry.utils.escapeHTML(BRANCHES[branch.id].label)} branch star.</p>`,
+      flags: { [MODULE_ID]: { star: { id, kind, level: newLevel } } },
+    });
+  }
+}
+
+/** Posts the Cram daily flat-check prompt when a flagged character rests for the night. */
+export async function promptCramFatigue(actor: StudyActor): Promise<void> {
+  if (actor.type && actor.type !== "character") return;
+  const state = readState(actor);
+  if (!state.flags.cramFatigue) return;
+  const id = foundry.utils.randomID();
+  await ChatMessage.create({
+    speaker: ChatMessage.getSpeaker({ actor }),
+    content: `<p>${foundry.utils.escapeHTML(actor.name)} must attempt a @Check[flat|dc:${CRAM_FLAT_DC}|options:${fatigueOption(id)}] flat check against Cram fatigue.</p>`,
+    flags: { [MODULE_ID]: { fatigue: id } },
+  });
+}
+
 /** Adds the academia result, and for the GM an Apply button, to a rendered Study message. */
 function renderStudyCard(message: MessageLike, html: HTMLElement, isGM: boolean): void {
   const entry = entryFromMessage(message);
@@ -142,5 +191,17 @@ export function registerStudy(): void {
   });
   Hooks.on("renderChatMessageHTML", (message: MessageLike, html: HTMLElement) => {
     renderStudyCard(message, html, game.user.isGM);
+  });
+  Hooks.on("preUpdateActor", (actor: StudyActor) => {
+    previousLevels.set(actor, actor.level);
+  });
+  Hooks.on(
+    "updateActor",
+    (actor: StudyActor, changed: ActorUpdateChanges, _options: unknown, userId?: string) => {
+      void resolveActorLevelUp(actor, changed, userId);
+    },
+  );
+  Hooks.on("pf2e.restForTheNight", (actor: StudyActor) => {
+    void promptCramFatigue(actor);
   });
 }
