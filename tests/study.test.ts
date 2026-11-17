@@ -1088,10 +1088,11 @@ describe("Practical Research", () => {
     expect(readState(capActor).branches.primary).toEqual({ id: "uzunjati", level: 7, starred: false });
   });
 
-  it("handles /study research and api.research() for the GM and posts the Apply card", async () => {
+  it("handles /research and api.research() for the GM and posts the Apply card", async () => {
     const actor = makeActor(2, 1, "conversant");
     const created: { content: string; flags: Record<string, Record<string, unknown>> }[] = [];
     const hooks: Record<string, ((...args: unknown[]) => unknown)[]> = {};
+    const CHAT_COMMANDS: Record<string, { rgx: RegExp; fn: () => boolean }> = {};
     const warn = vi.fn();
     const mod: { api?: { study?: typeof study; research?: typeof research } } = {};
     const user = { isGM: false, character: null as typeof actor | null };
@@ -1116,7 +1117,10 @@ describe("Practical Research", () => {
     });
     vi.stubGlobal("foundry", {
       utils: { randomID: () => "res-1", escapeHTML: (s: string) => s },
-      applications: { api: { DialogV2: { wait } } },
+      applications: {
+        api: { DialogV2: { wait } },
+        sidebar: { tabs: { ChatLog: { CHAT_COMMANDS } } },
+      },
     });
     vi.stubGlobal("Hooks", {
       on: (name: string, fn: (...args: unknown[]) => unknown) => {
@@ -1126,13 +1130,14 @@ describe("Practical Research", () => {
 
     registerStudy();
     expect(mod.api?.research).toBe(research);
+    expect(CHAT_COMMANDS.research?.rgx.test("/research")).toBe(true);
 
     await research(actor);
     expect(warn).toHaveBeenCalledWith("Only the GM can record Practical Research.");
     expect(wait).not.toHaveBeenCalled();
 
     user.isGM = true;
-    expect(hooks.chatMessage?.[0]?.({}, "<p>/study research</p>")).toBe(false);
+    expect(hooks.chatMessage?.[0]?.({}, "<p>/research</p>")).toBe(false);
     await vi.waitFor(() => expect(created).toHaveLength(1));
     // prettier-ignore
     expect(created[0]).toEqual({

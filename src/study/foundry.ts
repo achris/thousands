@@ -59,14 +59,15 @@ declare const foundry: {
     sidebar?: {
       tabs?: {
         ChatLog?: {
-          CHAT_COMMANDS?: Record<string, { rgx: RegExp; fn: (...args: unknown[]) => boolean }>;
+          CHAT_COMMANDS?: Record<string, { rgx: RegExp; fn: () => boolean }>;
         };
       };
     };
   };
 };
 
-const STUDY_COMMAND = /^\s*\/study(?:\s+(research))?\s*$/i;
+const STUDY_COMMAND = /^\s*\/study\s*$/i;
+const RESEARCH_COMMAND = /^\s*\/research\s*$/i;
 const previousLevels = new WeakMap<object, number>();
 const DEGREE_LABELS: Record<DegreeOfSuccess, string> = {
   criticalSuccess: "Critical Success",
@@ -75,11 +76,13 @@ const DEGREE_LABELS: Record<DegreeOfSuccess, string> = {
   criticalFailure: "Critical Failure",
 };
 
-function runStudyCommand(_log?: unknown, text?: unknown, _data?: unknown, match?: unknown): false {
-  const sub =
-    (Array.isArray(match) ? (match[1] as string | undefined) : undefined) ??
-    (typeof text === "string" ? STUDY_COMMAND.exec(text)?.[1] : undefined);
-  void (sub ? research() : study());
+function runStudyCommand(): false {
+  void study();
+  return false;
+}
+
+function runResearchCommand(): false {
+  void research();
   return false;
 }
 
@@ -333,7 +336,7 @@ function renderStudyCard(message: MessageLike, html: HTMLElement, isGM: boolean)
   html.querySelector(".message-content")?.append(card);
 }
 
-/** Registers the rule settings, `/study`, the macro API, and the chat card. Call on `init`. */
+/** Registers the rule settings, `/study`, `/research`, the macro API, and the chat card. Call on `init`. */
 export function registerStudy(): void {
   for (const [key, setting] of Object.entries(STUDY_SETTINGS)) {
     game.settings.register(MODULE_ID, key, { ...setting, scope: "world", config: true });
@@ -342,12 +345,16 @@ export function registerStudy(): void {
   if (module) module.api = { study, research };
   if (typeof foundry !== "undefined") {
     const commands = foundry.applications?.sidebar?.tabs?.ChatLog?.CHAT_COMMANDS;
-    if (commands) commands.study = { rgx: STUDY_COMMAND, fn: runStudyCommand };
+    if (commands) {
+      commands.study = { rgx: STUDY_COMMAND, fn: runStudyCommand };
+      commands.research = { rgx: RESEARCH_COMMAND, fn: runResearchCommand };
+    }
   }
   Hooks.on("chatMessage", (_log: unknown, text: string) => {
     const plain = text.trim().replace(/^<p>|<\/p>$/gi, "");
-    const match = STUDY_COMMAND.exec(plain);
-    return match ? runStudyCommand(_log, plain, undefined, match) : true;
+    if (STUDY_COMMAND.test(plain)) return runStudyCommand();
+    if (RESEARCH_COMMAND.test(plain)) return runResearchCommand();
+    return true;
   });
   Hooks.on("renderChatMessageHTML", (message: MessageLike, html: HTMLElement) => {
     renderStudyCard(message, html, game.user.isGM);
