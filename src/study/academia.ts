@@ -194,7 +194,11 @@ export function planStudy(state: AcademiaState, entry: StudyEntry) {
   return {
     record: { degree: entry.degree, delta: result.delta, star, skip: result.skipNext },
     feats,
-    flags: { ...auto, skipNext: skipNext || result.skipNext, cramFatigue: cram || (cramFatigue && !study) },
+    flags: {
+      ...auto,
+      skipNext: skipNext || result.skipNext,
+      cramFatigue: cram || (cramFatigue && !study),
+    },
     summary: `${notes.join("; ")}.`,
   };
 }
