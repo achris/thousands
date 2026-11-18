@@ -20,7 +20,7 @@ To install a specific version instead of the latest release, replace `latest/dow
 1. **Character setup**: At campaign start, have each player add `Academic Rank: Initiate`, one `Primary Branch: <Branch>` feat, and one `Secondary Branch: <Branch>` feat from the **Academia Feats** (`thousands.academia-feats`) compendium pack onto their character sheet's **Feats** tab (under Bonus Feats).
 2. **Opening a study period**: When the adventure reaches a downtime study period, announce the opportunity and reference the PF2e system's `Study`, `Cram`, or `Practical Research` entries in the _Adventure-Specific Actions_ compendium:
    - **Study** (ranks: Initiate, Attendant, Conversant): one skill check using an associated skill of the chosen branch against the standard level-based DC for that branch's current level (levels 0–20 map to DCs 14–40).
-   - **Cram** (ranks: Initiate, Attendant, Conversant): requires at least one branch to be 2 or more levels below its cap; performs Study twice. Until the character next takes Study, prompt a DC 8 flat check (`@Check[flat|dc:8]`) at the start of each adventuring day and apply `Fatigued` on a failure.
+   - **Cram** (ranks: Initiate, Attendant, Conversant): requires at least one branch to be 2 or more levels below its cap; performs Study twice. Until the character next takes Study, prompt or automatically roll a DC 8 flat check (`@Check[flat|dc:8]`) at the start of each adventuring day and apply `Fatigued` on a failure.
    - **Practical Research** (ranks: Conversant, Lore-Speaker): uses the check and rewards specified by the adventure for that research opportunity. As the GM, run `/research` in chat (or `game.modules.get("thousands").api.research()` from a macro), pick the character, branch, and either a skill and DC to roll or an outcome entered directly (plus an optional free-text note for unique rewards), then click **Apply** on the resulting chat card.
 3. **Applying outcomes and caps**: A primary branch's cap equals the character's level; a secondary branch's cap equals half the character's level (rounded down).
    - **Critical Success**: +2 branch levels, clamped to the branch's cap.
@@ -55,10 +55,13 @@ change it would make, and the GM clicks **Apply** to grant the benefit feats, br
 flag, and Cram fatigue flag (cleared on the character's next Study). When a character's level rises,
 each starred branch whose cap increases posts a chat card for the GM to **Apply** (granting the new
 branch level benefit feat and removing the `Branch Star` feat). After PF2e's **Rest for the Night**,
-any character carrying the Cram fatigue flag receives a `@Check[flat|dc:8]` chat prompt whose roll
-card lets the GM **Apply** the `Fatigued` condition on a failure. **Practical Research** results use the same **Apply** workflow (see step 2 above). GM world settings under
+any character carrying the Cram fatigue flag receives a `@Check[flat|dc:8]` chat prompt (or, when
+**Auto-roll Cram fatigue check after rest** is enabled, has the active GM client automatically roll
+the DC 8 flat check) whose roll card lets the GM **Apply** the `Fatigued` condition on a failure.
+**Practical Research** results use the same **Apply** workflow (see step 2 above). GM world settings under
 **Configure Settings** control whether both Cram checks require a branch 2+ levels below its cap and
-whether a critical-failure skip also consumes a Cram opportunity (both default to on), as well as
+whether a critical-failure skip also consumes a Cram opportunity (both default to on), whether
+**Rest for the Night** automatically rolls the Cram fatigue flat check (default off), and
 the optional even-level primary-branch auto-advance variant (default off, cap 10 or 11).
 
 ## Local development

@@ -42,8 +42,16 @@ declare const ChatMessage: {
   getSpeaker(options: { actor: unknown }): object;
 };
 declare const game: {
-  user: { id?: string; isGM: boolean; character?: StudyActor | null };
+  user: { id?: string; isGM: boolean; isActiveGM?: boolean; character?: StudyActor | null };
+  users?: { activeGM?: unknown };
   actors?: Iterable<StudyActor>;
+  time?: { worldTime?: number };
+  pf2e?: {
+    Check?: {
+      roll(check: unknown, context?: Record<string, unknown>): Promise<unknown>;
+    };
+    CheckModifier?: new (slug: string, statistic: { modifiers: never[] }) => unknown;
+  };
   settings: {
     register(scope: string, key: string, config: object): void;
     get(scope: string, key: string): unknown;
@@ -69,6 +77,7 @@ declare const foundry: {
 const STUDY_COMMAND = /^\s*\/study\s*$/i;
 const RESEARCH_COMMAND = /^\s*\/research\s*$/i;
 const previousLevels = new WeakMap<object, number>();
+const lastFatigueRolls = new WeakMap<object, { flagsKey: string; worldTime: number | undefined }>();
 const DEGREE_LABELS: Record<DegreeOfSuccess, string> = {
   criticalSuccess: "Critical Success",
   success: "Success",
@@ -98,6 +107,12 @@ export const STUDY_SETTINGS = {
     hint: "When enabled, a pending skip after a critical failure skips the next Study or Cram opportunity. When disabled, only Study is blocked and Cram remains available.",
     type: Boolean,
     default: true,
+  },
+  autoRollCramFatigue: {
+    name: "Auto-roll Cram fatigue check after rest",
+    hint: "When enabled, resting for the night automatically rolls the DC 8 flat check against Cram fatigue and posts the roll card for the GM to Apply on a failure, instead of posting a chat prompt.",
+    type: Boolean,
+    default: false,
   },
   autoAdvance: {
     name: "Auto-advance primary branch on even levels",
@@ -299,12 +314,52 @@ export async function resolveActorLevelUp(
   }
 }
 
-/** Posts the Cram daily flat-check prompt when a flagged character rests for the night. */
+function isActiveGM(): boolean {
+  if (!game.user.isGM) return false;
+  if (typeof game.user.isActiveGM === "boolean") return game.user.isActiveGM;
+  if (game.users && "activeGM" in game.users) return game.users.activeGM === game.user;
+  return true;
+}
+
+/** Posts or auto-rolls the Cram daily flat check when a flagged character rests for the night. */
 export async function promptCramFatigue(actor: StudyActor): Promise<void> {
   if (actor.type && actor.type !== "character") return;
   if (game.settings.get(MODULE_ID, "autoAdvance") === true) return;
   const state = readState(actor);
   if (!state.flags.cramFatigue) return;
+  if (game.settings.get(MODULE_ID, "autoRollCramFatigue") === true) {
+    if (!isActiveGM() || !game.pf2e?.Check) return;
+    const flagsKey = JSON.stringify(state.flags);
+    const worldTime = game.time?.worldTime;
+    const previous = lastFatigueRolls.get(actor);
+    if (previous && previous.flagsKey === flagsKey && previous.worldTime === worldTime) return;
+    lastFatigueRolls.set(actor, { flagsKey, worldTime });
+    const id = foundry.utils.randomID();
+    const check = game.pf2e.CheckModifier
+      ? new game.pf2e.CheckModifier("flat-check", { modifiers: [] })
+      : {
+          slug: "flat-check",
+          modifiers: [],
+          totalModifier: 0,
+          calculateTotal: () => undefined,
+        };
+    try {
+      await game.pf2e.Check.roll(check, {
+        actor,
+        type: "flat-check",
+        dc: { value: CRAM_FLAT_DC, visible: true },
+        title: "Cram Fatigue: Flat Check",
+        domains: ["flat-check"],
+        options: new Set([fatigueOption(id)]),
+        skipDialog: true,
+        createMessage: true,
+      });
+    } catch (error) {
+      lastFatigueRolls.delete(actor);
+      throw error;
+    }
+    return;
+  }
   const id = foundry.utils.randomID();
   await ChatMessage.create({
     speaker: ChatMessage.getSpeaker({ actor }),

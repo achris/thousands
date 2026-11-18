@@ -211,7 +211,7 @@ describe("starting Study", () => {
     });
     vi.stubGlobal("Hooks", { on: vi.fn() });
     registerStudy();
-    expect(register).toHaveBeenCalledTimes(4);
+    expect(register).toHaveBeenCalledTimes(5);
     for (const key of ["cramStrict", "skipAppliesToCram"]) {
       expect(register).toHaveBeenCalledWith(
         "thousands",
@@ -219,11 +219,13 @@ describe("starting Study", () => {
         expect.objectContaining({ scope: "world", config: true, type: Boolean, default: true }),
       );
     }
-    expect(register).toHaveBeenCalledWith(
-      "thousands",
-      "autoAdvance",
-      expect.objectContaining({ scope: "world", config: true, type: Boolean, default: false }),
-    );
+    for (const key of ["autoRollCramFatigue", "autoAdvance"]) {
+      expect(register).toHaveBeenCalledWith(
+        "thousands",
+        key,
+        expect.objectContaining({ scope: "world", config: true, type: Boolean, default: false }),
+      );
+    }
     expect(register).toHaveBeenCalledWith(
       "thousands",
       "autoAdvanceCap",
@@ -938,6 +940,142 @@ describe("automatic triggers", () => {
       done: true,
     });
     expect(await applyStudy(flagged, successEntry)).toBe(false);
+  });
+
+  it("auto-rolls the DC 8 Cram fatigue flat check after Rest for the Night when enabled, only on the active GM client, without duplicates, and leaves Apply to the GM", async () => {
+    const unflagged = makeActor(2);
+    const flagged = makeActor(2);
+    await applyStudy(flagged, entry("success", { id: "c-1", activity: "cram" }));
+    expect(flagged.flag.cramFatigue).toBe(true);
+
+    const created: { content: string; flags: Record<string, Record<string, unknown>> }[] = [];
+    const hooks: Record<string, ((...args: unknown[]) => unknown)[]> = {};
+    const settings: Record<string, unknown> = {
+      autoRollCramFatigue: false,
+      autoAdvance: false,
+    };
+    const user: { isGM: boolean; isActiveGM?: boolean } = { isGM: true, isActiveGM: true };
+    const users: { activeGM?: unknown } = { activeGM: user };
+    const time = { worldTime: 100 };
+    const checkRoll = vi.fn(async () => undefined);
+    const CheckModifier = vi.fn(function (
+      this: { slug: string; modifiers: never[] },
+      slug: string,
+      stat: { modifiers: never[] },
+    ) {
+      this.slug = slug;
+      this.modifiers = stat.modifiers;
+    });
+    let nextId = 1;
+
+    vi.stubGlobal("game", {
+      user,
+      users,
+      time,
+      pf2e: { Check: { roll: checkRoll }, CheckModifier },
+      settings: { register: vi.fn(), get: (_scope: string, key: string) => settings[key] },
+      modules: { get: () => ({}) },
+    });
+    vi.stubGlobal("ChatMessage", {
+      create: vi.fn(async (data: (typeof created)[number]) => created.push(data)),
+      getSpeaker: () => ({ alias: "Tester" }),
+    });
+    vi.stubGlobal("foundry", {
+      utils: { randomID: () => `auto-fat-${nextId++}`, escapeHTML: (s: string) => s },
+    });
+    vi.stubGlobal("Hooks", {
+      on: (name: string, fn: (...args: unknown[]) => unknown) => {
+        (hooks[name] ??= []).push(fn);
+      },
+    });
+    registerStudy();
+
+    // Off: keeps the chat prompt unchanged and does not auto-roll.
+    await promptCramFatigue(flagged);
+    expect(created).toHaveLength(1);
+    expect(created[0]?.content).toContain(
+      `@Check[flat|dc:8|options:${fatigueOption("auto-fat-1")}]`,
+    );
+    expect(checkRoll).not.toHaveBeenCalled();
+
+    // On, but auto-advance enabled: neither prompts nor rolls.
+    settings.autoRollCramFatigue = true;
+    settings.autoAdvance = true;
+    await promptCramFatigue(flagged);
+    expect(created).toHaveLength(1);
+    expect(checkRoll).not.toHaveBeenCalled();
+    settings.autoAdvance = false;
+
+    // Non-GM player or secondary non-active GM client: does not roll.
+    user.isGM = false;
+    await promptCramFatigue(flagged);
+    user.isGM = true;
+    user.isActiveGM = false;
+    await promptCramFatigue(flagged);
+    delete user.isActiveGM;
+    users.activeGM = { isGM: true };
+    await promptCramFatigue(flagged);
+    expect(checkRoll).not.toHaveBeenCalled();
+
+    // Active GM client: ignores unflagged characters and NPCs, rolls once for flagged character, and ignores duplicate hook calls.
+    users.activeGM = user;
+    await promptCramFatigue(unflagged);
+    await promptCramFatigue({ ...flagged, type: "npc" });
+    expect(checkRoll).not.toHaveBeenCalled();
+
+    hooks["pf2e.restForTheNight"]?.[0]?.(flagged);
+    hooks["pf2e.restForTheNight"]?.[0]?.(flagged);
+    await vi.waitFor(() => expect(checkRoll).toHaveBeenCalledTimes(1));
+    await promptCramFatigue(flagged);
+    expect(checkRoll).toHaveBeenCalledTimes(1);
+    expect(created).toHaveLength(1);
+    expect(flagged.increaseCondition).not.toHaveBeenCalled();
+
+    expect(CheckModifier).toHaveBeenCalledWith("flat-check", { modifiers: [] });
+    const [, rollContext] = vi.mocked(checkRoll).mock.calls[0] as unknown as [
+      unknown,
+      {
+        actor: unknown;
+        type: string;
+        dc: { value: number; visible: boolean };
+        options: Set<string>;
+        skipDialog: boolean;
+        createMessage: boolean;
+      },
+    ];
+    expect(rollContext).toMatchObject({
+      actor: flagged,
+      type: "flat-check",
+      dc: { value: 8, visible: true },
+      skipDialog: true,
+      createMessage: true,
+    });
+    expect([...rollContext.options]).toEqual([fatigueOption("auto-fat-2")]);
+
+    // Roll card produced by Check.roll feeds the existing GM Apply flow on failure without auto-applying Fatigued.
+    const rolledMsg: MessageLike = {
+      actor: flagged,
+      flags: { pf2e: { context: { options: rollContext.options, outcome: "failure" } } },
+      update: async () => undefined,
+    };
+    const failEntry = entryFromMessage(rolledMsg)!;
+    expect(failEntry).toEqual({ id: "auto-fat-2", activity: "fatigue", degree: "failure" });
+    expect(describeEntry(flagged, failEntry)).toEqual({
+      text: "fatigued for the day after Cram.",
+      done: false,
+    });
+    expect(flagged.increaseCondition).not.toHaveBeenCalled();
+    expect(await applyStudy(flagged, failEntry)).toBe(true);
+    expect(flagged.increaseCondition).toHaveBeenCalledTimes(1);
+    expect(flagged.increaseCondition).toHaveBeenCalledWith("fatigued");
+
+    // Next night's rest (after applying or advancing worldTime) rolls a fresh check once.
+    await promptCramFatigue(flagged);
+    await promptCramFatigue(flagged);
+    expect(checkRoll).toHaveBeenCalledTimes(2);
+    time.worldTime += 86_400;
+    await promptCramFatigue(flagged);
+    expect(checkRoll).toHaveBeenCalledTimes(3);
   });
 });
 

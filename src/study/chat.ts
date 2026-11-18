@@ -78,14 +78,15 @@ export function entryFromMessage(message: MessageLike): StudyEntry | null {
     };
   }
   const context = message.flags.pf2e?.context as
-    { options?: string[]; outcome?: DegreeOfSuccess | null } | undefined;
+    { options?: Iterable<string>; outcome?: DegreeOfSuccess | null } | undefined;
   const fatigue = mod?.fatigue;
   if (typeof fatigue === "string" && context?.outcome) {
     return { id: fatigue, activity: "fatigue", degree: context.outcome };
   }
-  const parsed = context?.options?.map(parseStudyOption).find((entry) => entry !== null);
+  const options = context?.options ? [...context.options] : undefined;
+  const parsed = options?.map(parseStudyOption).find((entry) => entry !== null);
   if (!parsed || !context?.outcome) return null;
-  const rawNote = context.options
+  const rawNote = options
     ?.find((opt) => opt.startsWith(RESEARCH_NOTE_PREFIX))
     ?.slice(RESEARCH_NOTE_PREFIX.length);
   const note = rawNote ? decodeURIComponent(rawNote) : undefined;
