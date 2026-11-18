@@ -942,7 +942,7 @@ describe("automatic triggers", () => {
     expect(await applyStudy(flagged, successEntry)).toBe(false);
   });
 
-  it("auto-rolls the DC 8 Cram fatigue flat check after Rest for the Night when enabled, only on the active GM client, without duplicates, and leaves Apply to the GM", async () => {
+  it("auto-rolls the DC 8 Cram fatigue flat check after Rest for the Night when enabled, on whichever client rested, without duplicates, and leaves Apply to the GM", async () => {
     const unflagged = makeActor(2);
     const flagged = makeActor(2);
     await applyStudy(flagged, entry("success", { id: "c-1", activity: "cram" }));
@@ -1006,19 +1006,9 @@ describe("automatic triggers", () => {
     expect(checkRoll).not.toHaveBeenCalled();
     settings.autoAdvance = false;
 
-    // Non-GM player or secondary non-active GM client: does not roll.
+    // Any client: ignores unflagged characters and NPCs, rolls once for flagged character, and ignores duplicate hook calls.
     user.isGM = false;
-    await promptCramFatigue(flagged);
-    user.isGM = true;
     user.isActiveGM = false;
-    await promptCramFatigue(flagged);
-    delete user.isActiveGM;
-    users.activeGM = { isGM: true };
-    await promptCramFatigue(flagged);
-    expect(checkRoll).not.toHaveBeenCalled();
-
-    // Active GM client: ignores unflagged characters and NPCs, rolls once for flagged character, and ignores duplicate hook calls.
-    users.activeGM = user;
     await promptCramFatigue(unflagged);
     await promptCramFatigue({ ...flagged, type: "npc" });
     expect(checkRoll).not.toHaveBeenCalled();

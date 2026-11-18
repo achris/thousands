@@ -56,8 +56,8 @@ flag, and Cram fatigue flag (cleared on the character's next Study). When a char
 each starred branch whose cap increases posts a chat card for the GM to **Apply** (granting the new
 branch level benefit feat and removing the `Branch Star` feat). After PF2e's **Rest for the Night**,
 any character carrying the Cram fatigue flag receives a `@Check[flat|dc:8]` chat prompt (or, when
-**Auto-roll Cram fatigue check after rest** is enabled, has the active GM client automatically roll
-the DC 8 flat check) whose roll card lets the GM **Apply** the `Fatigued` condition on a failure.
+**Auto-roll Cram fatigue check after rest** is enabled, automatically rolls the DC 8 flat check
+on the client that rested) whose roll card lets the GM **Apply** the `Fatigued` condition on a failure.
 **Practical Research** results use the same **Apply** workflow (see step 2 above). GM world settings under
 **Configure Settings** control whether both Cram checks require a branch 2+ levels below its cap and
 whether a critical-failure skip also consumes a Cram opportunity (both default to on), whether

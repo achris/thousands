@@ -314,13 +314,6 @@ export async function resolveActorLevelUp(
   }
 }
 
-function isActiveGM(): boolean {
-  if (!game.user.isGM) return false;
-  if (typeof game.user.isActiveGM === "boolean") return game.user.isActiveGM;
-  if (game.users && "activeGM" in game.users) return game.users.activeGM === game.user;
-  return true;
-}
-
 /** Posts or auto-rolls the Cram daily flat check when a flagged character rests for the night. */
 export async function promptCramFatigue(actor: StudyActor): Promise<void> {
   if (actor.type && actor.type !== "character") return;
@@ -328,7 +321,7 @@ export async function promptCramFatigue(actor: StudyActor): Promise<void> {
   const state = readState(actor);
   if (!state.flags.cramFatigue) return;
   if (game.settings.get(MODULE_ID, "autoRollCramFatigue") === true) {
-    if (!isActiveGM() || !game.pf2e?.Check) return;
+    if (!game.pf2e?.Check) return;
     const flagsKey = JSON.stringify(state.flags);
     const worldTime = game.time?.worldTime;
     const previous = lastFatigueRolls.get(actor);
