@@ -1,0 +1,27 @@
+ ✓ tests/rules/study.test.ts > applyStudyOutcome (primary, character level 6) > stars on a critical success one below the cap 0ms
+ ✓ tests/rules/study.test.ts > applyStudyOutcome (primary, character level 6) > changes nothing on failure, and flags a skip on critical failure 0ms
+ ✓ tests/rules/study.test.ts > applyStudyOutcome (secondary, character level 7) > stars on a critical success one below the cap 0ms
+ ✓ tests/rules/study.test.ts > applyStudyOutcome (secondary, character level 7) > changes nothing on failure, and flags a skip on critical failure 0ms
+ ✓ tests/rules/study.test.ts > cramEligibility > is ineligible at 0 and 1 below the cap, eligible at 2 0ms
+ ✓ tests/rules/study.test.ts > cramEligibility > respects rank 0ms
+ ✓ tests/rules/study.test.ts > classroom advantages > applies degree shifts, Cram fatigue immunity, and 3-check Cram only for matching student, branch, and activity 2ms
+ ✓ tests/feats.test.ts > academia bonus feat items > automates Make Your Own Luck fortune rerolls and daily use consumption hook 2ms
+ ✓ tests/feats.test.ts > academia bonus feat items > builds all 9 Classroom Advantage feats with @UUID links and Mariama's 1/day fortune reroll 1ms
+ ✓ tests/study.test.ts > starting Study > offers Cram only when eligible by branch gap and rank, and rejects an ineligible branch 3ms
+ ✓ tests/study.test.ts > starting Study > runs Cram as two checks, pricing the second from the level the first would reach 2ms
+ ✓ tests/study.test.ts > starting Study > honours cramStrict on and off for the second Cram check 2ms
+ ✓ tests/study.test.ts > starting Study > blocks Study and Cram with a warning while auto-advance is enabled 1ms
+ ✓ tests/study.test.ts > applying a result > plans and describes primary criticalSuccess (+2) 1ms
+ ✓ tests/study.test.ts > applying a result > plans and describes primary criticalFailure (skip) 1ms
+ ✓ tests/study.test.ts > applying a result > plans and describes criticalSuccess 1 below cap stars 1ms
+ ✓ tests/study.test.ts > applying a result > plans and describes Cram sets cramFatigue 1ms
+ ✓ tests/study.test.ts > applying a result > plans and describes Study clears cramFatigue 1ms
+ ✓ tests/study.test.ts > applying a result > plans and describes skipped clears skipNext and keeps cramFatigue 1ms
+ ✓ tests/study.test.ts > applying a result > does nothing when the same result is applied twice across both Cram rolls 2ms
+ ✓ tests/study.test.ts > applying a result > replaces an applied result when a reroll changes the outcome 1ms
+ ✓ tests/study.test.ts > applying a result > sets cramFatigue on Cram, keeps it across a skip, and clears it on the next Study 1ms
+ ✓ tests/study.test.ts > reading a result from chat > takes the entry from the roll option and the outcome a reroll leaves behind 1ms
+ ✓ tests/study.test.ts > automatic triggers > auto-rolls the DC 8 Cram fatigue flat check after Rest for the Night when enabled, on whichever client rested, without duplicates, and leaves Apply to the GM 4ms
+ ✓ tests/study.test.ts > Classroom Advantages > applies crit-failure shields (Anchor Root, Noxolo, Ignaci), success upgrades (Esi Djana, Tzeniwe), and Cram fatigue immunity (Chizire, Okoro) 4ms
+ ✓ tests/study.test.ts > Classroom Advantages > rolls 3 Cram checks in Rain-Scribes with Haibram Thodja, respects cramStrict, and renders Classroom Advantage in /study 3ms
+ ✓ tests/pf2e-data.test.ts > real PF2e system data > verifies Study, Cram, Practical Research, Recall Knowledge, skill slugs, and traits 2ms
