@@ -67,3 +67,35 @@ export const BRANCHES: Record<BranchId, BranchInfo> = {
     branchFeat10: "uzunjati-recollection",
   },
 };
+
+// prettier-ignore
+export const STUDENT_IDS = [
+  "anchor-root", "chizire", "esi-djana", "haibram-thodja", "ignaci-canterells",
+  "mariama-keitana", "noxolo", "okoro-obiyo", "tzeniwe",
+] as const;
+export type StudentId = (typeof STUDENT_IDS)[number];
+
+export type ClassroomAdvantageEffect =
+  "downgrade-crit-failure" | "upgrade-success" | "no-cram-fatigue" | "extra-cram-check" | "reroll";
+
+export interface StudentInfo {
+  label: string;
+  branch: BranchId;
+  activity: "study" | "cram";
+  effect: ClassroomAdvantageEffect;
+  unlocks: readonly string[];
+  page: number;
+}
+
+// prettier-ignore
+export const STUDENTS: Record<StudentId, StudentInfo> = {
+  "anchor-root": { label: "Anchor Root", branch: "rain-scribes", activity: "study", effect: "downgrade-crit-failure", unlocks: ["rhythm-bone"], page: 67 },
+  chizire: { label: "Chizire", branch: "cascade-bearers", activity: "cram", effect: "no-cram-fatigue", unlocks: ["verminous-lure"], page: 68 },
+  "esi-djana": { label: "Esi Djana", branch: "tempest-sun-mages", activity: "study", effect: "upgrade-success", unlocks: ["impeccable-flow"], page: 68 },
+  "haibram-thodja": { label: "Haibram Thodja", branch: "rain-scribes", activity: "cram", effect: "extra-cram-check", unlocks: ["airburst"], page: 69 },
+  "ignaci-canterells": { label: "Ignaci Canterells", branch: "emerald-boughs", activity: "cram", effect: "downgrade-crit-failure", unlocks: ["forgetful-ink"], page: 69 },
+  "mariama-keitana": { label: "Mariama Keitana", branch: "cascade-bearers", activity: "study", effect: "reroll", unlocks: ["lesson-of-calamity", "stumbling-curse"], page: 70 },
+  noxolo: { label: "Noxolo", branch: "uzunjati", activity: "study", effect: "downgrade-crit-failure", unlocks: ["grave-impressions"], page: 70 },
+  "okoro-obiyo": { label: "Okoro Obiyo", branch: "uzunjati", activity: "cram", effect: "no-cram-fatigue", unlocks: ["mind-games"], page: 71 },
+  tzeniwe: { label: "Tzeniwe", branch: "emerald-boughs", activity: "study", effect: "upgrade-success", unlocks: ["friendfetch"], page: 71 },
+};

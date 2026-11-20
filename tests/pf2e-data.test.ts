@@ -3,7 +3,12 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
-import { PF2E_FEAT_UUIDS, PF2E_SCHEMA_VERSION, sluggify } from "../src/feats/index.js";
+import {
+  PF2E_FEAT_UUIDS,
+  PF2E_SCHEMA_VERSION,
+  PF2E_UNLOCK_UUIDS,
+  sluggify,
+} from "../src/feats/index.js";
 import { BRANCHES, BRANCH_IDS, type Activity } from "../src/rules/index.js";
 
 const root = resolve(import.meta.dirname, "..");
@@ -26,6 +31,7 @@ interface PackItem {
 let pf2eVersion: string;
 let zipPath: string;
 let featsById: Map<string, PackItem>;
+let unlocksByUuid: Map<string, PackItem>;
 let adventureActions: PackItem[];
 let actions: PackItem[];
 let langEn: { PF2E: Record<string, unknown> & { Skill: Record<string, string> } };
@@ -51,6 +57,11 @@ beforeAll(async () => {
     writeFileSync(zipPath, new Uint8Array(await res.arrayBuffer()));
   }
   featsById = new Map(readZipJson<PackItem[]>("packs/feats.json").map((f) => [f._id, f]));
+  unlocksByUuid = new Map(
+    (["packs/equipment.json", "packs/spells.json", "packs/class-features.json"] as const).flatMap(
+      (p) => readZipJson<PackItem[]>(p).map((item) => [item._stats.compendiumSource, item]),
+    ),
+  );
   adventureActions = readZipJson<PackItem[]>("packs/adventure-specific-actions.json");
   actions = readZipJson<PackItem[]>("packs/actions.json");
   langEn = readZipJson("lang/en.json");
@@ -136,5 +147,13 @@ describe("real PF2e system data", () => {
     expect(langEn.PF2E.TraitDowntime).toBe("Downtime");
     expect(langEn.PF2E.TraitFortune).toBe("Fortune");
     expect(langEn.PF2E.TraitArchetype).toBe("Archetype");
+
+    for (const [slug, { uuid, label }] of Object.entries(PF2E_UNLOCK_UUIDS)) {
+      const item = unlocksByUuid.get(uuid);
+      expect(item, `${slug} (${uuid})`).toBeDefined();
+      expect(item?.name).toBe(label);
+      expect(item?.system.slug ?? sluggify(item?.name ?? "")).toBe(slug);
+      expect(item?.system.traits.rarity).toBe("uncommon");
+    }
   });
 });

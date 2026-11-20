@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ACADEMIA_FEATS,
   BENEFIT_FEATS,
+  CLASSROOM_ADVANTAGE_FEATS,
   MAX_DESCRIPTION_LENGTH,
   PACK_ID,
   PF2E_FEAT_UUIDS,
+  PF2E_UNLOCK_UUIDS,
   STANDING_FEATS,
   featIdFromSlug,
   sluggify,
@@ -16,6 +18,8 @@ import {
   BRANCH_IDS,
   MAX_BRANCH_LEVEL,
   RANKS,
+  STUDENTS,
+  STUDENT_IDS,
   benefitAtLevel,
   benefitsUnlocked,
 } from "../src/rules/index.js";
@@ -61,8 +65,9 @@ describe("benefits rules table", () => {
 describe("academia bonus feat items", () => {
   it("validates every item against the PF2e 8.7.0 bonus feat shape", () => {
     expect(STANDING_FEATS).toHaveLength(RANKS.length + BRANCH_IDS.length * 3);
+    expect(CLASSROOM_ADVANTAGE_FEATS).toHaveLength(STUDENT_IDS.length);
     expect(BENEFIT_FEATS).toHaveLength(BRANCH_IDS.length * BENEFITS.length);
-    expect(ACADEMIA_FEATS).toHaveLength(119);
+    expect(ACADEMIA_FEATS).toHaveLength(128);
 
     const ids = new Set<string>();
     const names = new Set<string>();
@@ -152,8 +157,9 @@ describe("academia bonus feat items", () => {
   it("keeps every description within the short length limit with a page reference", () => {
     for (const item of ACADEMIA_FEATS) {
       const desc = item.system.description.value;
-      expect(desc.length, `${item.name}: ${desc}`).toBeLessThanOrEqual(MAX_DESCRIPTION_LENGTH);
-      expect(desc).toMatch(/^<p>[^<]+\(p\. 6[2-5]\)\.<\/p>$/);
+      const plain = desc.replace(/@UUID\[[^\]]+\]\{([^}]+)\}/g, "$1");
+      expect(plain.length, `${item.name}: ${plain}`).toBeLessThanOrEqual(MAX_DESCRIPTION_LENGTH);
+      expect(desc).toMatch(/^<p>[^<]+\(p\. (?:6[2-5]|6[7-9]|7[01])\)\.<\/p>$/);
     }
   });
 
@@ -435,5 +441,59 @@ describe("academia bonus feat items", () => {
         predicate: ["magical-paragon:uzunjati"],
       }),
     );
+  });
+
+  it("builds all 9 Classroom Advantage feats with @UUID links and Mariama's 1/day fortune reroll", async () => {
+    for (const id of STUDENT_IDS) {
+      const s = STUDENTS[id];
+      const feat = CLASSROOM_ADVANTAGE_FEATS.find(
+        (f) => f.name === `Classroom Advantage: ${s.label}`,
+      );
+      expect(feat?.system.rules).toContainEqual({
+        key: "RollOption",
+        domain: "all",
+        option: `academia:classroom-advantage:${id}`,
+      });
+      for (const u of s.unlocks) {
+        const { uuid, label } = PF2E_UNLOCK_UUIDS[u as keyof typeof PF2E_UNLOCK_UUIDS];
+        expect(feat?.system.description.value).toContain(`@UUID[${uuid}]{${label}}`);
+      }
+    }
+
+    const mariama = CLASSROOM_ADVANTAGE_FEATS.find(
+      (f) => f.name === "Classroom Advantage: Mariama Keitana",
+    )!;
+    expect(mariama.system.traits.value).toEqual(["fortune"]);
+    expect(mariama.system.frequency).toEqual({ max: 1, per: "day" });
+    expect(mariama.system.rules).toContainEqual({
+      key: "RollTwice",
+      selector: ["skill-check"],
+      keep: "higher",
+      predicate: ["classroom-advantage:mariama-keitana", "study-check:branch:cascade-bearers"],
+    });
+
+    const update = vi.fn();
+    const rules = mariama.system.rules.map((r) =>
+      r.option === "classroom-advantage:mariama-keitana" ? { ...r, value: true } : r,
+    );
+    const mariamaItem = {
+      type: "feat",
+      system: { frequency: { value: 1, max: 1, per: "day" }, rules },
+      update,
+    };
+    const msg = (branch: string) => ({
+      actor: { items: [mariamaItem] },
+      flags: {
+        pf2e: {
+          context: {
+            options: ["classroom-advantage:mariama-keitana", `study-check:branch:${branch}`],
+          },
+        },
+      },
+    });
+    expect(await consumeDailyFeatUse(msg("uzunjati"))).toBe(0);
+    expect(update).not.toHaveBeenCalled();
+    expect(await consumeDailyFeatUse(msg("cascade-bearers"))).toBe(1);
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ "system.frequency.value": 0 }));
   });
 });

@@ -5,6 +5,8 @@ import {
   BRANCH_IDS,
   PROFICIENCY_LABELS,
   RANKS,
+  STUDENTS,
+  STUDENT_IDS,
   type BenefitInfo,
   type BranchId,
   type BranchKind,
@@ -17,6 +19,9 @@ export const MAX_DESCRIPTION_LENGTH = 160;
 export const PF2E_SCHEMA_VERSION = 0.961;
 
 const FP = "Compendium.pf2e.feats-srd.Item.";
+const EP = "Compendium.pf2e.equipment-srd.Item.";
+const SP = "Compendium.pf2e.spells-srd.Item.";
+const CP = "Compendium.pf2e.classfeatures.Item.";
 
 /** Verified PF2e 8.7.0 compendium UUIDs in `pf2e.feats-srd`. */
 // prettier-ignore
@@ -38,6 +43,21 @@ export const PF2E_FEAT_UUIDS = {
   "tempest-sun-shielding": `${FP}sTUicpQkhiFVtMK1`,
   "uzunjati-storytelling": `${FP}my4uFR8cnDC4mJE2`,
   "uzunjati-recollection": `${FP}UCen3Tq6BJlNI7rx`,
+} as const;
+
+/** Verified PF2e 8.7.0 compendium UUIDs unlocked by befriending Spire Dormitory students. */
+// prettier-ignore
+export const PF2E_UNLOCK_UUIDS = {
+  "rhythm-bone": { uuid: `${EP}geAAUwfmOc5U0qOE`, label: "Rhythm Bone" },
+  "verminous-lure": { uuid: `${SP}Juk3cD5385Ftybct`, label: "Verminous Lure" },
+  "impeccable-flow": { uuid: `${SP}8VzbumNyMEdSzZSz`, label: "Impeccable Flow" },
+  "airburst": { uuid: `${SP}fprqWKUc0jnMIyGU`, label: "Airburst" },
+  "forgetful-ink": { uuid: `${EP}iCRoLguNunOjIM7L`, label: "Forgetful Ink" },
+  "lesson-of-calamity": { uuid: `${CP}PLMmDXJCDdMS0V5C`, label: "Lesson of Calamity" },
+  "stumbling-curse": { uuid: `${SP}X8PSYw6WC2ePYSXd`, label: "Stumbling Curse" },
+  "grave-impressions": { uuid: `${SP}Xrz6wPXDBUr27izR`, label: "Grave Impressions" },
+  "mind-games": { uuid: `${SP}29JyWqqZ0thCFr1C`, label: "Mind Games" },
+  "friendfetch": { uuid: `${SP}TjrZGl8z2INgf3vi`, label: "Friendfetch" },
 } as const;
 
 export type RuleElementKey =
@@ -564,8 +584,48 @@ function buildBenefitFeat(branchId: BranchId, ben: BenefitInfo): PF2eFeatSource 
   }
 }
 
+function buildClassroomAdvantageFeats(): PF2eFeatSource[] {
+  return STUDENT_IDS.map((id) => {
+    const s = STUDENTS[id];
+    const b = BRANCHES[s.branch].label;
+    const act = s.activity === "cram" ? "Cram" : "Study";
+    const effectText = {
+      "downgrade-crit-failure": `${b} ${act} critical failures become failures`,
+      "upgrade-success": `${b} Study successes become critical successes`,
+      "no-cram-fatigue": `${b} Cramming causes no Cram fatigue`,
+      "extra-cram-check": `${b} Cramming rolls 3 Study checks instead of 2`,
+      reroll: `1/day fortune reroll on ${b} Study`,
+    }[s.effect];
+    const unlocks = s.unlocks
+      .map((u) => PF2E_UNLOCK_UUIDS[u as keyof typeof PF2E_UNLOCK_UUIDS])
+      .map(({ uuid, label }) => `@UUID[${uuid}]{${label}}`)
+      .join(" and ");
+    const base: RuleElementSource[] = [
+      rollOpt(`academia:classroom-advantage:${id}`),
+      aeLike("override", `flags.${MODULE_ID}.classroomAdvantages.${id}`, true),
+    ];
+    const toggle = `classroom-advantage:${id}`;
+    const reroll = s.effect === "reroll";
+    // prettier-ignore
+    const rules: RuleElementSource[] = reroll
+      ? [...base, rollOpt(toggle, true), { key: "RollTwice", selector: ["skill-check"], keep: "higher", predicate: [toggle, `study-check:branch:${s.branch}`] }]
+      : base;
+    return makeFeat(
+      `Classroom Advantage: ${s.label}`,
+      1,
+      `${effectText}; unlocks ${unlocks} (p. ${s.page}).`,
+      rules,
+      [`Befriended ${s.label}`],
+      reroll ? ["fortune"] : [],
+      reroll ? { max: 1, per: "day" } : null,
+    );
+  });
+}
+
 export const STANDING_FEATS: readonly PF2eFeatSource[] = buildStandingFeats();
+export const CLASSROOM_ADVANTAGE_FEATS: readonly PF2eFeatSource[] = buildClassroomAdvantageFeats();
 export const BENEFIT_FEATS: readonly PF2eFeatSource[] = BRANCH_IDS.flatMap((branchId) =>
   BENEFITS.map((benefit) => buildBenefitFeat(branchId, benefit)),
 );
-export const ACADEMIA_FEATS: readonly PF2eFeatSource[] = [...STANDING_FEATS, ...BENEFIT_FEATS];
+// prettier-ignore
+export const ACADEMIA_FEATS: readonly PF2eFeatSource[] = [...STANDING_FEATS, ...CLASSROOM_ADVANTAGE_FEATS, ...BENEFIT_FEATS];

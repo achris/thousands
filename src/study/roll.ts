@@ -1,10 +1,13 @@
 import {
   BRANCHES,
   MAX_BRANCH_LEVEL,
+  STUDENTS,
   applyStudyOutcome,
   canDoActivity,
+  cramCheckCount,
   cramEligibility,
   dcForLevel,
+  type BranchId,
   type BranchKind,
   type DegreeOfSuccess,
 } from "../rules/index.js";
@@ -43,6 +46,7 @@ export interface StudyUi {
     title: string,
     choices: CheckChoice[],
     allowed: AllowedActivities,
+    notes?: readonly string[],
   ): Promise<{ activity: StudyActivity; choice: CheckChoice } | null>;
   warn(text: string): void;
   postSkip(actor: StudyActor, id: string): Promise<unknown>;
@@ -58,6 +62,9 @@ export const RESEARCH_NOTE_PREFIX = "thousands:research-note:";
 /** Roll option that marks a check as a Study, Cram, or Practical Research roll; PF2e carries it over to rerolls. */
 export const studyOption = (id: string, activity: StudyActivity, kind: BranchKind) =>
   `thousands:study:${id}:${activity}:${kind}`;
+
+/** Roll option naming the branch of a `/study` check for PF2e predicates (such as Mariama's RollTwice). */
+export const studyBranchOption = (branchId: BranchId) => `study-check:branch:${branchId}`;
 
 /** Roll option that carries an optional Practical Research unique-reward note on a check roll. */
 export const researchNoteOption = (note: string) =>
@@ -146,12 +153,23 @@ async function rollStudy(
     dc: dcForLevel(branch.level),
     label: `${activity === "cram" ? "Cram" : "Study"}: ${BRANCHES[branch.id].label} (${statistic.label})`,
     traits: ["downtime"],
-    extraRollOptions: [studyOption(id, activity, choice.kind), "downtime"],
+    extraRollOptions: [
+      studyOption(id, activity, choice.kind),
+      studyBranchOption(branch.id),
+      "downtime",
+    ],
     callback: (_roll, outcome) => {
       degree = outcome ?? null;
     },
   });
   return degree;
+}
+
+function activeAdvantageNotes(state: AcademiaState): string[] {
+  const branchIds = new Set(KINDS.flatMap((k) => state.branches[k]?.id ?? []));
+  return (state.advantages ?? [])
+    .filter((id) => branchIds.has(STUDENTS[id].branch))
+    .map((id) => `${STUDENTS[id].label} (${BRANCHES[STUDENTS[id].branch].label})`);
 }
 
 /** Runs Study or Cram for a character: pick, roll at the engine's DC, leave the result in chat. */
@@ -176,32 +194,47 @@ export async function startStudy(actor: StudyActor, ui: StudyUi): Promise<void> 
     await ui.postSkip(actor, id);
     return;
   }
-  const first = await ui.pick("Study", choices, allowed);
+  const notes = activeAdvantageNotes(state);
+  const first = await ui.pick("Study", choices, allowed, notes);
   if (!first || !allowed[first.activity]) return;
   if (first.activity === "study") {
     await rollStudy(actor, state, "study", id, first.choice);
     return;
   }
-  // Cram is two Study checks; the second is picked after the first so it sees that result.
+  // Cram is two Study checks (or three in Rain-Scribes with Haibram Thodja), priced sequentially.
   let current = state;
-  for (const n of [1, 2] as const) {
-    const open = ui.setting("cramStrict") ? cramKinds(current) : KINDS;
+  let totalChecks = 2;
+  for (let n = 1; n <= totalChecks; n++) {
+    const baseOpen = ui.setting("cramStrict") ? cramKinds(current) : KINDS;
+    const open =
+      n === 3 ? baseOpen.filter((k) => current.branches[k]?.id === "rain-scribes") : baseOpen;
     const options = studyChoices(actor, current, open);
-    if (n === 2 && options.length === 0) {
-      return ui.warn("No branch is still 2 levels below its cap, so Cram ends after one check.");
+    if (n > 1 && options.length === 0) {
+      const msg =
+        n === 2
+          ? "No branch is still 2 levels below its cap, so Cram ends after one check."
+          : "Rain-Scribes is no longer 2 levels below its cap, so Cram ends after two checks.";
+      return ui.warn(msg);
     }
+    const title = n === 2 ? "Cram: second check" : "Cram: third check";
     const choice =
-      n === 1
-        ? first.choice
-        : (await ui.pick("Cram: second check", options, { cram: true }))?.choice;
+      n === 1 ? first.choice : (await ui.pick(title, options, { cram: true }, notes))?.choice;
     if (!choice) return;
     if (!open.includes(choice.kind)) {
       return ui.warn("Cram needs a branch at least 2 levels below its cap.");
     }
-    const degree = await rollStudy(actor, current, "cram", `${id}-${n}`, choice);
     const branch = current.branches[choice.kind];
-    if (!degree || !branch) return;
-    const next = applyStudyOutcome(branch, choice.kind, current.characterLevel, degree).state;
+    if (!branch) return;
+    if (cramCheckCount(branch.id, current.advantages) > totalChecks) {
+      totalChecks = cramCheckCount(branch.id, current.advantages);
+    }
+    const degree = await rollStudy(actor, current, "cram", `${id}-${n}`, choice);
+    if (!degree) return;
+    const next = applyStudyOutcome(branch, choice.kind, current.characterLevel, degree, {
+      activity: "cram",
+      branchId: branch.id,
+      advantages: current.advantages,
+    }).state;
     current = {
       ...current,
       branches: { ...current.branches, [choice.kind]: { ...branch, ...next } },

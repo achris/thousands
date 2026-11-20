@@ -7,15 +7,19 @@ import {
   CRAM_FLAT_DC,
   MAX_BRANCH_LEVEL,
   RANKS,
+  STUDENTS,
+  STUDENT_IDS,
   applyStudyOutcome,
   autoAdvanceOnLevelUp,
   evenLevelsCrossed,
   resolveStarOnLevelUp,
+  suppressesCramFatigue,
   type BranchId,
   type BranchKind,
   type BranchState,
   type DegreeOfSuccess,
   type Rank,
+  type StudentId,
 } from "../rules/index.js";
 
 export type AppliedDegree = DegreeOfSuccess | "skipped" | "starred" | "auto";
@@ -54,6 +58,7 @@ export interface AcademiaState {
   rank: Rank;
   characterLevel: number;
   branches: Partial<Record<BranchKind, BranchState & { id: BranchId }>>;
+  advantages?: readonly StudentId[];
   flags: StudyFlags;
 }
 
@@ -66,6 +71,7 @@ for (const feat of ACADEMIA_FEATS) {
 
 export const levelOption = (id: BranchId, level: number) => `academia:branch:${id}:level:${level}`;
 export const starOption = (id: BranchId) => `academia:starred:${id}`;
+export const advantageOption = (id: StudentId) => `academia:classroom-advantage:${id}`;
 
 export function featFor(option: string): PF2eFeatSource {
   const feat = FEAT_BY_OPTION.get(option);
@@ -93,6 +99,7 @@ export function readState(actor: ActorLike): AcademiaState {
     rank: [...RANKS].reverse().find((r) => owns(`academia:rank:${r}`)) ?? "initiate",
     characterLevel: actor.level,
     branches,
+    advantages: STUDENT_IDS.filter((id) => owns(advantageOption(id))),
     flags: (actor.getFlag(MODULE_ID, "study") as StudyFlags | undefined) ?? {},
   };
 }
@@ -172,7 +179,12 @@ export function planStudy(state: AcademiaState, entry: StudyEntry) {
       summary: `${BRANCHES[branch.id].label} ${branch.level} → ${next.level} (auto-advanced at level ${toLevel}).`,
     };
   }
-  const result = applyStudyOutcome(branch, entry.kind, state.characterLevel, entry.degree);
+  const advantages = state.advantages ?? [];
+  const result = applyStudyOutcome(branch, entry.kind, state.characterLevel, entry.degree, {
+    activity: entry.activity,
+    branchId: branch.id,
+    advantages,
+  });
   const star = result.starred && !branch.starred;
   const feats: PF2eFeatSource[] = [];
   for (let level = branch.level + 1; level <= result.state.level; level++) {
@@ -181,12 +193,25 @@ export function planStudy(state: AcademiaState, entry: StudyEntry) {
   if (star) feats.push(featFor(starOption(branch.id)));
   const cram = entry.activity === "cram";
   const study = entry.activity === "study";
+  const fatigueStudent = suppressesCramFatigue(entry.activity, branch.id, advantages);
+  const inflictsCramFatigue = cram && !fatigueStudent;
+  const advNote = result.advantage
+    ? `Classroom Advantage (${STUDENTS[result.advantage].label}): ${
+        entry.degree === "criticalFailure"
+          ? "critical failure treated as failure"
+          : "success upgraded to critical success"
+      }`
+    : undefined;
   const notes = [
     `${BRANCHES[branch.id].label} ${branch.level} → ${result.state.level}`,
+    ...(advNote ? [advNote] : []),
     ...(star ? ["starred for the next level-up"] : []),
     ...(result.skipNext ? ["must skip the next Study opportunity"] : []),
-    ...(cram
+    ...(inflictsCramFatigue
       ? [`DC ${CRAM_FLAT_DC} flat check against fatigue each day until the next Study`]
+      : []),
+    ...(cram && fatigueStudent
+      ? [`Classroom Advantage (${STUDENTS[fatigueStudent].label}): avoids Cram fatigue`]
       : []),
     ...(cramFatigue && study ? ["clears Cram fatigue"] : []),
     ...(entry.note ? [entry.note] : []),
@@ -197,7 +222,7 @@ export function planStudy(state: AcademiaState, entry: StudyEntry) {
     flags: {
       ...auto,
       skipNext: skipNext || result.skipNext,
-      cramFatigue: cram || (cramFatigue && !study),
+      cramFatigue: inflictsCramFatigue || (cramFatigue && !study),
     },
     summary: `${notes.join("; ")}.`,
   };

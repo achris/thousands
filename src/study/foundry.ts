@@ -130,7 +130,7 @@ export const STUDY_SETTINGS = {
 } as const;
 
 const foundryUi: StudyUi & ResearchUi = {
-  async pick(title, choices, allowed) {
+  async pick(title, choices, allowed, notes) {
     const options = choices.map(
       (c, i) => `<option value="${i}">${foundry.utils.escapeHTML(c.label)}</option>`,
     );
@@ -144,9 +144,12 @@ const foundryUi: StudyUi & ResearchUi = {
         disabled: !allowed[activity],
         callback: (_event: unknown, button: PickButton) => ({ activity, choice: picked(button) }),
       }));
+    const advantageHtml = notes?.length
+      ? `<p>Classroom Advantage: ${foundry.utils.escapeHTML(notes.join(", "))}</p>`
+      : "";
     const result = await foundry.applications.api.DialogV2.wait({
       window: { title },
-      content: `<label>Branch and skill <select name="check">${options.join("")}</select></label>`,
+      content: `${advantageHtml}<label>Branch and skill <select name="check">${options.join("")}</select></label>`,
       buttons,
       rejectClose: false,
     });

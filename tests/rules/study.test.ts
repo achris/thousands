@@ -5,15 +5,20 @@ import {
   BRANCHES,
   BRANCH_IDS,
   DC_BY_LEVEL,
+  STUDENTS,
+  STUDENT_IDS,
+  adjustStudyDegree,
   applyStudyOutcome,
   autoAdvanceOnLevelUp,
   branchCap,
   canDoActivity,
   consumeSkip,
+  cramCheckCount,
   cramEligibility,
   dcForLevel,
   evenLevelsCrossed,
   resolveStarOnLevelUp,
+  suppressesCramFatigue,
   type BranchKind,
   type BranchState,
   type DegreeOfSuccess,
@@ -232,5 +237,27 @@ describe("rank gating and skips", () => {
   it("consumes a pending skip once", () => {
     expect(consumeSkip(true)).toEqual({ skipped: true, skipNext: false });
     expect(consumeSkip(false)).toEqual({ skipped: false, skipNext: false });
+  });
+});
+
+describe("classroom advantages", () => {
+  // prettier-ignore
+  it("applies degree shifts, Cram fatigue immunity, and 3-check Cram only for matching student, branch, and activity", () => {
+    expect(STUDENT_IDS).toHaveLength(9);
+    for (const id of STUDENT_IDS) expect(BRANCH_IDS).toContain(STUDENTS[id].branch);
+    for (const [id, branch, act] of [["anchor-root", "rain-scribes", "study"], ["noxolo", "uzunjati", "study"], ["ignaci-canterells", "emerald-boughs", "cram"]] as const) {
+      expect(adjustStudyDegree("criticalFailure", act, branch, [id])).toEqual({ degree: "failure", student: id });
+      expect(adjustStudyDegree("criticalFailure", act === "study" ? "cram" : "study", branch, [id])).toEqual({ degree: "criticalFailure" });
+      expect(applyStudyOutcome(st(2), "primary", 6, "criticalFailure", { activity: act, branchId: branch, advantages: [id] })).toEqual({ state: st(2), delta: 0, starred: false, skipNext: false, advantage: id });
+    }
+    for (const [id, branch] of [["esi-djana", "tempest-sun-mages"], ["tzeniwe", "emerald-boughs"]] as const) {
+      expect(adjustStudyDegree("success", "study", branch, [id])).toEqual({ degree: "criticalSuccess", student: id });
+      expect(adjustStudyDegree("success", "cram", branch, [id])).toEqual({ degree: "success" });
+      expect(applyStudyOutcome(st(2), "primary", 6, "success", { activity: "study", branchId: branch, advantages: [id] })).toEqual({ state: st(4), delta: 2, starred: false, skipNext: false, advantage: id });
+    }
+    expect(suppressesCramFatigue("cram", "cascade-bearers", ["chizire"])).toBe("chizire");
+    expect(suppressesCramFatigue("cram", "uzunjati", ["okoro-obiyo"])).toBe("okoro-obiyo");
+    expect(suppressesCramFatigue("cram", "uzunjati", ["chizire"])).toBeUndefined();
+    expect([cramCheckCount("rain-scribes", ["haibram-thodja"]), cramCheckCount("rain-scribes"), cramCheckCount("uzunjati", ["haibram-thodja"])]).toEqual([3, 2, 2]);
   });
 });

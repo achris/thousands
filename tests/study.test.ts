@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { DegreeOfSuccess, Rank } from "../src/rules/index.js";
+import type { BranchId, DegreeOfSuccess, Rank, StudentId } from "../src/rules/index.js";
 import { describeEntry, entryFromMessage, type MessageLike } from "../src/study/chat.js";
 import {
   STUDY_SETTINGS,
@@ -14,6 +14,7 @@ import {
   researchNoteOption,
   startResearch,
   startStudy,
+  studyBranchOption,
   studyOption,
   type AllowedActivities,
   type ResearchFlag,
@@ -23,6 +24,7 @@ import {
   type StudyUi,
 } from "../src/study/roll.js";
 import {
+  advantageOption,
   applyStudy,
   type ActorLike,
   featFor,
@@ -126,7 +128,11 @@ describe("starting Study", () => {
       expect.objectContaining({
         dc: 16,
         traits: ["downtime"],
-        extraRollOptions: ["thousands:study:abc:study:primary", "downtime"],
+        extraRollOptions: [
+          "thousands:study:abc:study:primary",
+          "study-check:branch:uzunjati",
+          "downtime",
+        ],
       }),
     );
   });
@@ -165,8 +171,8 @@ describe("starting Study", () => {
     expect(calls.map((c) => c.dc)).toEqual([16, 19]);
     expect(calls.map((c) => c.traits)).toEqual([["downtime"], ["downtime"]]);
     expect(calls.map((c) => c.extraRollOptions)).toEqual([
-      [studyOption("abc-1", "cram", "primary"), "downtime"],
-      [studyOption("abc-2", "cram", "primary"), "downtime"],
+      [studyOption("abc-1", "cram", "primary"), studyBranchOption("uzunjati"), "downtime"],
+      [studyOption("abc-2", "cram", "primary"), studyBranchOption("uzunjati"), "downtime"],
     ]);
   });
 
@@ -1273,5 +1279,82 @@ describe("Practical Research", () => {
       content: "<p>Tester completes Practical Research for Uzunjati (arcana DC 24): Success — Archive access.</p>",
       flags: { thousands: { research: { id: "res-1", kind: "primary", degree: "success", check: "arcana", dc: 24, note: "Archive access" } } },
     });
+  });
+});
+
+describe("Classroom Advantages", () => {
+  // prettier-ignore
+  function makeBranchActor(primary: BranchId, secondary: BranchId, students: readonly StudentId[], pTop = 1, sTop = 1) {
+    const actor = makeActor(0, 0);
+    const opts = [`academia:branch:primary:${primary}`, `academia:branch:secondary:${secondary}`, ...Array.from({ length: pTop }, (_, i) => levelOption(primary, i + 1)), ...Array.from({ length: sTop }, (_, i) => levelOption(secondary, i + 1)), ...students.map(advantageOption)];
+    actor.items = opts.map((opt, idx) => ({ id: `ca${idx}`, system: { slug: featFor(opt).system.slug } }));
+    for (const slug of ["nature", "diplomacy", "intimidation"]) {
+      actor.skills[slug] = { slug, label: slug, roll: vi.fn(async ({ callback }) => callback?.(null, actor.outcomes.shift() ?? "success")) };
+    }
+    return actor;
+  }
+
+  it("applies crit-failure shields (Anchor Root, Noxolo, Ignaci), success upgrades (Esi Djana, Tzeniwe), and Cram fatigue immunity (Chizire, Okoro)", async () => {
+    const shield = makeBranchActor("rain-scribes", "uzunjati", ["anchor-root", "noxolo"]);
+    await applyStudy(shield, entry("criticalFailure", { id: "ar-1", activity: "study" }));
+    await applyStudy(shield, entry("criticalFailure", { id: "nx-1", kind: "secondary" }));
+    expect(shield.flag.skipNext).toBe(false);
+    await applyStudy(shield, entry("criticalFailure", { id: "ar-cram", activity: "cram" }));
+    expect(shield.flag.skipNext).toBe(true);
+
+    const ignaci = makeBranchActor("emerald-boughs", "uzunjati", ["ignaci-canterells"]);
+    await applyStudy(ignaci, entry("criticalFailure", { id: "ig-cram", activity: "cram" }));
+    expect(ignaci.flag.skipNext).toBe(false);
+    await applyStudy(ignaci, entry("criticalFailure", { id: "ig-study", activity: "study" }));
+    expect(ignaci.flag.skipNext).toBe(true);
+
+    // prettier-ignore
+    const upgrade = makeBranchActor("tempest-sun-mages", "emerald-boughs", ["esi-djana", "tzeniwe"], 1, 0);
+    expect(describeEntry(upgrade, entry("success")).text).toContain("Tempest-Sun Mages 1 → 3");
+    await applyStudy(upgrade, entry("success", { id: "esi-1" }));
+    expect(primaryLevel(upgrade)).toBe(3);
+    await applyStudy(upgrade, entry("success", { id: "esi-cram", activity: "cram" }));
+    expect(primaryLevel(upgrade)).toBe(4);
+    await applyStudy(upgrade, entry("success", { id: "tz-1", kind: "secondary" }));
+    expect(readState(upgrade).branches.secondary?.level).toBe(2);
+
+    const fatigue = makeBranchActor("uzunjati", "cascade-bearers", ["chizire", "okoro-obiyo"]);
+    await applyStudy(fatigue, entry("success", { id: "ok-1", activity: "cram" }));
+    await applyStudy(fatigue, entry("success", { id: "ch-1", activity: "cram", kind: "secondary" })); // prettier-ignore
+    expect(fatigue.flag.cramFatigue).toBe(false);
+  });
+
+  it("rolls 3 Cram checks in Rain-Scribes with Haibram Thodja, respects cramStrict, and renders Classroom Advantage in /study", async () => {
+    // prettier-ignore
+    const haibram = makeBranchActor("rain-scribes", "cascade-bearers", ["haibram-thodja", "mariama-keitana"]);
+    haibram.outcomes.push("success", "success", "success");
+    const titles: string[] = [];
+    const baseUi = makeUi([["cram", "nature"], ["cram", "nature"], ["cram", "nature"]]); // prettier-ignore
+    const origPick = baseUi.pick;
+    baseUi.pick = async (title, choices, allowed, notes) => {
+      titles.push(`${title}|${(notes ?? []).join(",")}`);
+      return origPick(title, choices, allowed, notes);
+    };
+    await startStudy(haibram, baseUi);
+    expect(titles[0]).toBe("Study|Haibram Thodja (Rain-Scribes),Mariama Keitana (Cascade Bearers)");
+    expect(titles.map((t) => t.split("|")[0])).toEqual(["Study", "Cram: second check", "Cram: third check"]); // prettier-ignore
+    expect(vi.mocked(haibram.skills.nature!.roll).mock.calls.map(([a]) => a.dc)).toEqual([15, 16, 18]); // prettier-ignore
+
+    const nearCap = makeBranchActor("rain-scribes", "cascade-bearers", ["haibram-thodja"], 3, 1);
+    const strictUi = makeUi([["cram", "nature"], ["cram", "nature"]], { cramStrict: true }); // prettier-ignore
+    await startStudy(nearCap, strictUi);
+    expect(strictUi.warn).toHaveBeenCalledWith(expect.stringContaining("ends after two checks"));
+    const otherUi = makeUi([["cram", "arcana"], ["cram", "arcana"]]); // prettier-ignore
+    await startStudy(makeBranchActor("rain-scribes", "cascade-bearers", ["haibram-thodja"], 1, 0), otherUi); // prettier-ignore
+    expect(otherUi.seen).toHaveLength(2);
+
+    const wait = vi.fn(async () => null);
+    vi.stubGlobal("game", { user: { isGM: true }, settings: { get: () => undefined } });
+    vi.stubGlobal("ui", { notifications: { warn: vi.fn() } });
+    // prettier-ignore
+    vi.stubGlobal("foundry", { utils: { randomID: () => "d1", escapeHTML: (s: string) => s }, applications: { api: { DialogV2: { wait } } } });
+    await study(haibram);
+    // prettier-ignore
+    expect(wait).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining("<p>Classroom Advantage: Haibram Thodja (Rain-Scribes), Mariama Keitana (Cascade Bearers)</p>") }));
   });
 });

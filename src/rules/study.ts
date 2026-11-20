@@ -1,4 +1,10 @@
-import type { BranchKind } from "./branches.js";
+import {
+  STUDENTS,
+  type BranchId,
+  type BranchKind,
+  type ClassroomAdvantageEffect,
+  type StudentId,
+} from "./branches.js";
 import { MAX_BRANCH_LEVEL } from "./dc.js";
 
 export type DegreeOfSuccess = "criticalSuccess" | "success" | "failure" | "criticalFailure";
@@ -45,6 +51,49 @@ export function canDoActivity(activity: Activity, rank: Rank): boolean {
   return RANKS_FOR[activity].includes(rank);
 }
 
+export interface StudyAdvantageContext {
+  activity: Activity;
+  branchId: BranchId;
+  advantages?: Iterable<StudentId>;
+}
+
+function matchingAdvantage(
+  act: Activity,
+  branch: BranchId,
+  effect: ClassroomAdvantageEffect,
+  advantages: Iterable<StudentId> = [],
+): StudentId | undefined {
+  return [...advantages].find(
+    (id) =>
+      STUDENTS[id].branch === branch &&
+      STUDENTS[id].activity === act &&
+      STUDENTS[id].effect === effect,
+  );
+}
+
+export function adjustStudyDegree(
+  degree: DegreeOfSuccess,
+  act: Activity,
+  branch: BranchId,
+  advantages: Iterable<StudentId> = [],
+): { degree: DegreeOfSuccess; student?: StudentId } {
+  const down =
+    degree === "criticalFailure" &&
+    matchingAdvantage(act, branch, "downgrade-crit-failure", advantages);
+  if (down) return { degree: "failure", student: down };
+  const up = degree === "success" && matchingAdvantage(act, branch, "upgrade-success", advantages);
+  return up ? { degree: "criticalSuccess", student: up } : { degree };
+}
+
+export const suppressesCramFatigue = (
+  act: Activity,
+  branch: BranchId,
+  advantages: Iterable<StudentId> = [],
+): StudentId | undefined => matchingAdvantage(act, branch, "no-cram-fatigue", advantages);
+
+export const cramCheckCount = (branch: BranchId, advantages: Iterable<StudentId> = []): 2 | 3 =>
+  matchingAdvantage("cram", branch, "extra-cram-check", advantages) ? 3 : 2;
+
 export interface StudyResult {
   state: BranchState;
   /** Levels actually gained. */
@@ -53,6 +102,8 @@ export interface StudyResult {
   starred: boolean;
   /** True when the character must skip their next Study opportunity. */
   skipNext: boolean;
+  /** Classroom Advantage student whose rule adjusted the degree, if any. */
+  advantage?: StudentId;
 }
 
 export function applyStudyOutcome(
@@ -60,9 +111,13 @@ export function applyStudyOutcome(
   kind: BranchKind,
   characterLevel: number,
   degree: DegreeOfSuccess,
+  context?: StudyAdvantageContext,
 ): StudyResult {
+  const adjusted = context
+    ? adjustStudyDegree(degree, context.activity, context.branchId, context.advantages)
+    : { degree };
   const cap = branchCap(kind, characterLevel);
-  const gain = GAIN[degree];
+  const gain = GAIN[adjusted.degree];
   const delta = Math.max(0, Math.min(gain, cap - state.level));
   // At the absolute maximum there is nothing to carry over.
   const starred = gain > delta && cap < MAX_BRANCH_LEVEL;
@@ -70,7 +125,8 @@ export function applyStudyOutcome(
     state: { level: state.level + delta, starred: state.starred || starred },
     delta,
     starred,
-    skipNext: degree === "criticalFailure",
+    skipNext: adjusted.degree === "criticalFailure",
+    ...(adjusted.student ? { advantage: adjusted.student } : {}),
   };
 }
 

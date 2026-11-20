@@ -1,7 +1,11 @@
 import { MODULE_ID, initMessage } from "./constants.js";
 import { registerStudy } from "./study/foundry.js";
 
-export const DAILY_TOGGLE_PREFIXES = ["make-your-own-luck:", "magical-paragon:"] as const;
+export const DAILY_TOGGLE_PREFIXES = [
+  "make-your-own-luck:",
+  "magical-paragon:",
+  "classroom-advantage:",
+] as const;
 
 export interface DailyFeatItemLike {
   type?: string;
@@ -29,8 +33,9 @@ export async function consumeDailyFeatUse(message: ChatMessageLike): Promise<num
   const items = message.actor?.items;
   if (!rawOptions || !items) return 0;
 
+  const optionSet = new Set(rawOptions);
   const activeToggles = new Set<string>();
-  for (const opt of rawOptions) {
+  for (const opt of optionSet) {
     if (DAILY_TOGGLE_PREFIXES.some((prefix) => opt.startsWith(prefix))) {
       activeToggles.add(opt);
     }
@@ -54,6 +59,20 @@ export async function consumeDailyFeatUse(message: ChatMessageLike): Promise<num
         typeof r.option === "string" &&
         activeToggles.has(r.option)
       ) {
+        const rollTwice = rules.find(
+          (rt) =>
+            rt.key === "RollTwice" &&
+            Array.isArray(rt.predicate) &&
+            rt.predicate.includes(r.option),
+        );
+        if (
+          rollTwice &&
+          !(rollTwice.predicate as unknown[]).every(
+            (p) => typeof p !== "string" || optionSet.has(p),
+          )
+        ) {
+          return r;
+        }
         matched = true;
         return { ...r, value: false };
       }
