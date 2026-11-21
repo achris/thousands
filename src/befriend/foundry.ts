@@ -160,10 +160,15 @@ const foundryBefriendUi: BefriendUi = {
     ];
     const val = (b: PickButton, name: string) => b.form.elements.namedItem(name)?.value ?? "";
     const content = [
-      standingsHtml,
       ...(isGM && actors.length > 1
-        ? [`<label>Character <select name="target">${actorOpts.join("")}</select></label>`]
-        : []),
+        ? [
+            standingsHtml,
+            `<label>Character <select name="target">${actorOpts.join("")}</select></label>`,
+          ]
+        : [
+            `<p class="thousands-character">Character: <strong>${esc(first.name)}</strong></p>`,
+            standingsHtml,
+          ]),
       `<label>Student <select name="student">${studentOpts.join("")}</select></label>`,
       ...(isGM
         ? [`<label>Action <select name="action">${actionOpts.join("")}</select></label>`]
@@ -292,9 +297,7 @@ export async function befriend(actor?: BefriendActor | null): Promise<void> {
 function resolveTargets(message: MessageLike, actorIds?: readonly string[]): BefriendActor[] {
   if (actorIds?.length) {
     const byId = new Map(
-      [...(game.actors ?? [])].flatMap((a) =>
-        a.id && isCharacter(a) ? [[a.id, a] as const] : [],
-      ),
+      [...(game.actors ?? [])].flatMap((a) => (a.id && isCharacter(a) ? [[a.id, a] as const] : [])),
     );
     return actorIds.flatMap((id) => byId.get(id) ?? []);
   }
