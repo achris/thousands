@@ -1,0 +1,51 @@
+npm notice run thousands@0.0.0 npx
+npm notice run 'vitest' run tests/study.test.ts tests/pf2e-data.test.ts --reporter=verbose
+
+ RUN  v5.1.0 {run-worktree}
+
+ ✓ tests/study.test.ts > starting Study > rolls the chosen skill at the DC for the branch level and tags the roll 6ms
+ ✓ tests/study.test.ts > starting Study > offers Cram only when eligible by branch gap and rank, and rejects an ineligible branch 3ms
+ ✓ tests/study.test.ts > starting Study > runs Cram as two checks, pricing the second from the level the first would reach 2ms
+ ✓ tests/study.test.ts > starting Study > honours cramStrict on and off for the second Cram check 2ms
+ ✓ tests/study.test.ts > starting Study > posts a skipped opportunity instead of rolling while a skip is pending 3ms
+ ✓ tests/study.test.ts > starting Study > registers world settings with auto-advance off by default and cap 10–11 3ms
+ ✓ tests/study.test.ts > starting Study > blocks Study and Cram with a warning while auto-advance is enabled 1ms
+ ✓ tests/study.test.ts > starting Study > handles /study from Foundry v14 ProseMirror chat input and opens the Study dialog 106ms
+ ✓ tests/study.test.ts > starting Study > resolves study() target from explicit actor, then controlled token, then assigned character, then warns 2ms
+ ✓ tests/study.test.ts > applying a result > plans and describes primary criticalSuccess (+2) 1ms
+ ✓ tests/study.test.ts > applying a result > plans and describes primary success (+1) 0ms
+ ✓ tests/study.test.ts > applying a result > plans and describes primary failure (+0) 0ms
+ ✓ tests/study.test.ts > applying a result > plans and describes primary criticalFailure (skip) 0ms
+ ✓ tests/study.test.ts > applying a result > plans and describes criticalSuccess 1 below cap stars 0ms
+ ✓ tests/study.test.ts > applying a result > plans and describes secondary success at cap stars 0ms
+ ✓ tests/study.test.ts > applying a result > plans and describes already-starred at cap no duplicate star 1ms
+ ✓ tests/study.test.ts > applying a result > plans and describes level 20 cap does not star 1ms
+ ✓ tests/study.test.ts > applying a result > plans and describes Cram sets cramFatigue 0ms
+ ✓ tests/study.test.ts > applying a result > plans and describes Study clears cramFatigue 1ms
+ ✓ tests/study.test.ts > applying a result > plans and describes skipped clears skipNext and keeps cramFatigue 0ms
+ ✓ tests/study.test.ts > applying a result > handles missing branch feats, multiple rank feats, and unknown feat options 2ms
+ ✓ tests/study.test.ts > applying a result > grants one benefit feat per level gained, per outcome 1ms
+ ✓ tests/study.test.ts > applying a result > stops at the cap and grants the branch star for the excess 1ms
+ ✓ tests/study.test.ts > applying a result > does nothing when the same result is applied twice across both Cram rolls 2ms
+ ✓ tests/study.test.ts > applying a result > replaces an applied result when a reroll changes the outcome 1ms
+ ✓ tests/study.test.ts > applying a result > sets cramFatigue on Cram, keeps it across a skip, and clears it on the next Study 1ms
+ ✓ tests/study.test.ts > reading a result from chat > takes the entry from the roll option and the outcome a reroll leaves behind 1ms
+ ✓ tests/study.test.ts > reading a result from chat > renders the chat card for each outcome, shows Apply to the GM only, and applies on click 3ms
+ ✓ tests/study.test.ts > automatic triggers > fires star resolution only on a level increase and applies idempotently 54ms
+ ✓ tests/study.test.ts > automatic triggers > auto-advances the primary branch on even levels when enabled, handles multi-level jumps, enforces the cap, and applies idempotently 5ms
+ ✓ tests/study.test.ts > automatic triggers > prompts the DC 8 flat check on Rest for the Night only for flagged characters and applies idempotently 3ms
+ ✓ tests/study.test.ts > automatic triggers > auto-rolls the DC 8 Cram fatigue flat check after Rest for the Night when enabled, on whichever client rested, without duplicates, and leaves Apply to the GM 4ms
+ ✓ tests/study.test.ts > Practical Research > enforces the Conversant / Lore-Speaker rank gate and branch requirement 2ms
+ ✓ tests/study.test.ts > Practical Research > rolls a skill check at the GM-stated DC or records a direct outcome with an optional reward note 1ms
+ ✓ tests/study.test.ts > Practical Research > applies outcomes per degree of success, respects idempotency and star carry-over, and records reward notes without mechanics 3ms
+ ✓ tests/study.test.ts > Practical Research > handles /research and api.research() for the GM and posts the Apply card 53ms
+ ✓ tests/study.test.ts > Classroom Advantages > applies crit-failure shields (Anchor Root, Noxolo, Ignaci), success upgrades (Esi Djana, Tzeniwe), and Cram fatigue immunity (Chizire, Okoro) 3ms
+ ✓ tests/study.test.ts > Classroom Advantages > rolls 3 Cram checks in Rain-Scribes with Haibram Thodja, respects cramStrict, and renders Classroom Advantage in /study 2ms
+ ✓ tests/pf2e-data.test.ts > real PF2e system data > matches every referenced feat UUID, slug, level, category, trait, and prerequisite in packs/feats.json 7ms
+ ✓ tests/pf2e-data.test.ts > real PF2e system data > verifies Study, Cram, Practical Research, Recall Knowledge, skill slugs, and traits 2ms
+
+ Test Files  2 passed (2)
+      Tests  40 passed (40)
+   Start at  02:56:55
+   Duration  1.44s (tests 76%, transform 18%, import 5%, worker 1%)
+

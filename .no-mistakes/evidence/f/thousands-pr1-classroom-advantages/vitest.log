@@ -1,0 +1,88 @@
+npm notice run thousands@0.0.0 npx
+npm notice run 'vitest' run tests/feats.test.ts tests/study.test.ts tests/rules/study.test.ts tests/pf2e-data.test.ts --reporter=verbose
+
+ RUN  v5.1.0 {run-worktree}
+
+ ✓ tests/rules/study.test.ts > tables > has every DC for levels 0 to 20 5ms
+ ✓ tests/rules/study.test.ts > tables > describes all five branches 2ms
+ ✓ tests/rules/study.test.ts > branchCap > uses character level for primary 0ms
+ ✓ tests/rules/study.test.ts > branchCap > uses half character level rounded down for secondary 0ms
+ ✓ tests/rules/study.test.ts > branchCap > floors at 0 and caps at 20 0ms
+ ✓ tests/rules/study.test.ts > applyStudyOutcome (primary, character level 6) > applies full gains when well below the cap 1ms
+ ✓ tests/rules/study.test.ts > applyStudyOutcome (primary, character level 6) > reaches the cap exactly without a star 0ms
+ ✓ tests/rules/study.test.ts > applyStudyOutcome (primary, character level 6) > stars on a critical success one below the cap 0ms
+ ✓ tests/rules/study.test.ts > applyStudyOutcome (primary, character level 6) > stars on any success at the cap 0ms
+ ✓ tests/rules/study.test.ts > applyStudyOutcome (primary, character level 6) > changes nothing on failure, and flags a skip on critical failure 1ms
+ ✓ tests/rules/study.test.ts > applyStudyOutcome (primary, character level 6) > keeps an existing star 0ms
+ ✓ tests/rules/study.test.ts > applyStudyOutcome (secondary, character level 7) > applies full gains when well below the cap 0ms
+ ✓ tests/rules/study.test.ts > applyStudyOutcome (secondary, character level 7) > reaches the cap exactly without a star 0ms
+ ✓ tests/rules/study.test.ts > applyStudyOutcome (secondary, character level 7) > stars on a critical success one below the cap 0ms
+ ✓ tests/rules/study.test.ts > applyStudyOutcome (secondary, character level 7) > stars on any success at the cap 2ms
+ ✓ tests/rules/study.test.ts > applyStudyOutcome (secondary, character level 7) > changes nothing on failure, and flags a skip on critical failure 0ms
+ ✓ tests/rules/study.test.ts > applyStudyOutcome (secondary, character level 7) > keeps an existing star 0ms
+ ✓ tests/rules/study.test.ts > star resolution > sets a star then resolves it to the new cap on level-up 0ms
+ ✓ tests/rules/study.test.ts > star resolution > uses the secondary cap, which only rises on even levels 0ms
+ ✓ tests/rules/study.test.ts > star resolution > leaves unstarred branches alone 0ms
+ ✓ tests/rules/study.test.ts > star resolution > does not star at the absolute maximum 0ms
+ ✓ tests/rules/study.test.ts > even-level auto-advance > lists even character levels crossed between previous and new levels 1ms
+ ✓ tests/rules/study.test.ts > even-level auto-advance > raises the primary branch on even levels, ignores odd/unchanged/falling levels, and handles multi-level jumps 0ms
+ ✓ tests/rules/study.test.ts > even-level auto-advance > enforces the default cap of 10 and optional cap of 11, and skips already-applied even levels 1ms
+ ✓ tests/rules/study.test.ts > cramEligibility > is ineligible at 0 and 1 below the cap, eligible at 2 1ms
+ ✓ tests/rules/study.test.ts > cramEligibility > respects rank 0ms
+ ✓ tests/rules/study.test.ts > rank gating and skips > gates each activity by rank 0ms
+ ✓ tests/rules/study.test.ts > rank gating and skips > consumes a pending skip once 0ms
+ ✓ tests/rules/study.test.ts > classroom advantages > applies degree shifts, Cram fatigue immunity, and 3-check Cram only for matching student, branch, and activity 3ms
+ ✓ tests/feats.test.ts > benefits rules table > covers branch levels 1 to 20 and slices unlocked benefits 5ms
+ ✓ tests/feats.test.ts > academia bonus feat items > validates every item against the PF2e 8.7.0 bonus feat shape 22ms
+ ✓ tests/feats.test.ts > academia bonus feat items > uses only valid PF2e rule element keys, selectors, paths, and UUIDs 16ms
+ ✓ tests/feats.test.ts > academia bonus feat items > matches benefit level requirements and numbers from the rules engine 7ms
+ ✓ tests/feats.test.ts > academia bonus feat items > keeps every description within the short length limit with a page reference 3ms
+ ✓ tests/feats.test.ts > academia bonus feat items > automates fixed Additional Lore skills and keeps open-ended Lore notes 1ms
+ ✓ tests/feats.test.ts > academia bonus feat items > automates Dedicated Attendant rank check and Arcana/Nature skill upgrade 1ms
+ ✓ tests/feats.test.ts > academia bonus feat items > filters granted skill feats by tier max level and branch feats by prerequisites 1ms
+ ✓ tests/feats.test.ts > academia bonus feat items > automates Make Your Own Luck fortune rerolls and daily use consumption hook 2ms
+ ✓ tests/feats.test.ts > academia bonus feat items > automates standing feats, skill increases, general feats, toggles, and Magical Paragon 1ms
+ ✓ tests/feats.test.ts > academia bonus feat items > builds all 9 Classroom Advantage feats with @UUID links and Mariama's 1/day fortune reroll 1ms
+⎯⎯⎯⎯⎯⎯ Unhandled Errors ⎯⎯⎯⎯⎯⎯
+
+Vitest caught 2 unhandled errors during the test run.
+This might cause false positive tests. Resolve unhandled errors to make sure your tests are not affected.
+
+⎯⎯⎯⎯⎯⎯ Unhandled Error ⎯⎯⎯⎯⎯⎯⎯
+Error: [vitest-pool]: Worker forks emitted error.
+ ❯ EventEmitter.onTaskError node_modules/vitest/dist/chunks/index.Di8au7q4.js:5926:21
+ ❯ EventEmitter.emit node:events:526:24
+ ❯ ChildProcess.emitUnexpectedExit node_modules/vitest/dist/chunks/index.Di8au7q4.js:5401:22
+ ❯ ChildProcess.emit node:events:514:28
+ ❯ ChildProcess._handle.onexit node:internal/child_process:324:12
+
+Caused by: Error: Worker exited unexpectedly with signal SIGSEGV during starting state
+ ❯ ChildProcess.emitUnexpectedExit node_modules/vitest/dist/chunks/index.Di8au7q4.js:5399:33
+ ❯ ChildProcess.emit node:events:514:28
+ ❯ ChildProcess._handle.onexit node:internal/child_process:324:12
+
+
+⎯⎯⎯⎯⎯⎯ Unhandled Error ⎯⎯⎯⎯⎯⎯⎯
+Error: [vitest-pool]: Worker forks emitted error.
+ ❯ EventEmitter.onTaskError node_modules/vitest/dist/chunks/index.Di8au7q4.js:5926:21
+ ❯ EventEmitter.emit node:events:526:24
+ ❯ ChildProcess.emitUnexpectedExit node_modules/vitest/dist/chunks/index.Di8au7q4.js:5401:22
+ ❯ ChildProcess.emit node:events:514:28
+ ❯ ChildProcess._handle.onexit node:internal/child_process:324:12
+
+Caused by: Error: Worker exited unexpectedly with signal SIGSEGV during starting state
+ ❯ ChildProcess.emitUnexpectedExit node_modules/vitest/dist/chunks/index.Di8au7q4.js:5399:33
+ ❯ ChildProcess.emit node:events:514:28
+ ❯ ChildProcess._handle.onexit node:internal/child_process:324:12
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+
+
+ Test Files  2 passed (2)
+      Tests  40 passed (40)
+     Errors  2 errors
+   Start at  02:56:36
+   Duration  634ms (transform 75%, tests 13%, import 10%, worker 2%)
+
+[vitest-pool]: Timeout terminating forks worker for test files {run-worktree}/tests/study.test.ts.
+[vitest-pool]: Timeout terminating forks worker for test files {run-worktree}/tests/pf2e-data.test.ts.
