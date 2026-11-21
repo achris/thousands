@@ -1,0 +1,11 @@
+npm notice run thousands@0.0.0 npx
+npm notice run 'vitest' run tests/feats.test.ts tests/pf2e-data.test.ts tests/rules/study.test.ts tests/study.test.ts
+
+ RUN  v5.1.0 {run-worktree}
+
+
+ Test Files  4 passed (4)
+      Tests  80 passed (80)
+   Start at  03:28:10
+   Duration  1.84s (transform 61%, tests 32%, import 6%, worker 1%)
+
