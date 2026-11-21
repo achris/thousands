@@ -2,3 +2,32 @@
 .thousands {
   --thousands-accent: #6b4e9b;
 }
+
+.thousands-befriend-standings {
+  max-height: 16rem;
+  overflow-y: auto;
+  margin-bottom: 0.5rem;
+}
+
+.thousands-standings {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9em;
+}
+
+.thousands-standings th,
+.thousands-standings td {
+  padding: 0.2rem 0.4rem;
+  text-align: left;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+}
+
+.thousands-attitude.is-befriended {
+  font-weight: 600;
+  color: #6b4e9b;
+}
+
+.thousands-note {
+  font-style: italic;
+  opacity: 0.85;
+}

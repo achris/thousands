@@ -393,7 +393,9 @@ export function registerStudy(): void {
     game.settings.register(MODULE_ID, key, { ...setting, scope: "world", config: true });
   }
   const module = game.modules.get(MODULE_ID);
-  if (module) module.api = { study, research };
+  if (module) {
+    module.api = { ...(module.api as Record<string, unknown> | undefined), study, research };
+  }
   if (typeof foundry !== "undefined") {
     const commands = foundry.applications?.sidebar?.tabs?.ChatLog?.CHAT_COMMANDS;
     if (commands) {

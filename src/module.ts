@@ -1,3 +1,4 @@
+import { registerBefriend } from "./befriend/foundry.js";
 import { MODULE_ID, initMessage } from "./constants.js";
 import { registerStudy } from "./study/foundry.js";
 
@@ -101,6 +102,7 @@ if (typeof Hooks !== "undefined") {
   Hooks.once("init", () => {
     console.log(initMessage(MODULE_ID));
     registerStudy();
+    registerBefriend();
   });
   Hooks.on("createChatMessage", (message) => {
     void consumeDailyFeatUse(message);

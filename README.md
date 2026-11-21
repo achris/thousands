@@ -29,7 +29,7 @@ To install a specific version instead of the latest release, replace `latest/dow
    - **Failure**: No change.
    - **Critical Failure**: No change, and the character must skip their next Study opportunity.
 4. **Rank advancement and Perquisite**: When characters advance in academic rank in the adventure, have them replace their `Academic Rank` feat with `Attendant`, `Conversant`, or `Lore-Speaker`. Verify Perquisite completion before a character claims a level 3 `Dedicated Attendant` benefit feat.
-5. **Spire Dormitory Classroom Advantages**: When a character befriends one of the nine Spire Dormitory fellow students, have them add `Classroom Advantage: <Student>` from the **Academia Feats** compendium onto their sheet. Each feat links that student's unlocked spell, item, or witch lesson, and `/study` automatically applies owned Classroom Advantages during Study and Cram (degree upgrades/downgrades, 3-check Rain-Scribes Cramming with Haibram Thodja, Cram fatigue immunity with Chizire or Okoro Obiyo, and Mariama Keitana's toggleable 1/day Cascade Bearers Study fortune reroll).
+5. **Spire Dormitory Classroom Advantages**: Use `/befriend` to track each character's standing with the nine Spire Dormitory fellow students (see **Befriending Spire Dormitory Students** below). Reaching the befriended threshold automatically grants `Classroom Advantage: <Student>` from the **Academia Feats** compendium when you click **Apply** (or players can drag the feat manually). Each feat links that student's unlocked spell, item, or witch lesson, and `/study` automatically applies owned Classroom Advantages during Study and Cram (degree upgrades/downgrades, 3-check Rain-Scribes Cramming with Haibram Thodja, Cram fatigue immunity with Chizire or Okoro Obiyo, and Mariama Keitana's toggleable 1/day Cascade Bearers Study fortune reroll).
 6. **Opting out of the subsystem (optional variant)**: Under **Configure Settings**, enable **Auto-advance primary branch on even levels** (default off) to replace Study and Cram rolls with automatic primary-branch advancement of +1 level at each even character level, posting a chat card for the GM to **Apply**. **Auto-advance primary branch cap** defaults to `10` (the 10 even levels from 2 through 20) and can be raised to `11` to match the adventure sidebar's printed maximum at level 20.
 
 ## Player Workflow
@@ -45,6 +45,7 @@ To install a specific version instead of the latest release, replace `latest/dow
    - PF2e rule elements automatically grant bonus feats (`Additional Lore`, `Magaambyan Attendant Dedication`, 6th/10th-level branch feats, and general feats), prompt for skill feats or fallback feats, upgrade skill proficiencies, and add roll notes.
    - Follow any `Manual:` note in the feat's description (for example, naming a granted Lore skill on your sheet or tracking 1/day uses for `Make Your Own Luck` and `Magical Paragon`).
 4. **Toggle situational bonuses**: On your character sheet's **Actions** tab, toggle **Steeped in History** when rolling Recall Knowledge about the Magaambya or your branch, and toggle **Branch Influence** when making Deception, Diplomacy, Intimidation, or Performance checks with members of that branch.
+5. **Befriend Spire Dormitory peers**: Run `/befriend` in chat to view your character's current attitude and notes with each of the nine fellow students and, when skill check rolls are enabled, roll a check to improve standing.
 
 ## Rolling Study and Cram
 
@@ -64,6 +65,17 @@ on the client that rested) whose roll card lets the GM **Apply** the `Fatigued` 
 whether a critical-failure skip also consumes a Cram opportunity (both default to on), whether
 **Rest for the Night** automatically rolls the Cram fatigue flat check (default off), and
 the optional even-level primary-branch auto-advance variant (default off, cap 10 or 11).
+
+## Befriending Spire Dormitory Students
+
+Type `/befriend` in chat, or run `game.modules.get("thousands").api.befriend()` from a macro, to view and update standings with the nine Spire Dormitory students (Anchor Root, Chizire, Esi Djana, Haibram Thodja, Ignaci Canterells, Mariama Keitana, Noxolo, Okoro Obiyo, and Tzeniwe). Standings are stored per character in actor flags on the standard PF2e attitude track (**Hostile** → **Unfriendly** → **Indifferent** → **Friendly** → **Helpful**), starting at **Indifferent** (or at the befriended threshold if the character already owns that student's `Classroom Advantage` feat).
+
+- **Players**: Select your token (or use your assigned character) and run `/befriend` to review all nine students' current attitudes and latest notes. When rolling is enabled, pick a student, skill (defaulting to Diplomacy), DC, and an optional short note (such as a campus task or peer favor) to roll a check. Critical Success shifts attitude up 2 steps, Success shifts up 1 step, Failure leaves attitude unchanged, and Critical Failure shifts down 1 step.
+- **GMs**: Run `/befriend` to inspect any character (or switch between characters and a **Whole party** overview). You can either roll a check for a specific character or record a direct standing change (`+1 step`, `+2 steps`, `-1 step`, or `Set to <Attitude>`) with an optional note for either one character or the whole party at once—useful for shared service projects, extracurricular favors, or roleplay milestones.
+- **Applying results**: Both rolled checks and GM-recorded updates post a chat card showing the attitude change, note, and any feat change. Click **Apply** on the chat card to commit the update. Reaching the befriended threshold automatically grants that student's `Classroom Advantage: <Student>` bonus feat (which links their unlocked uncommon spell, item, or witch lesson); dropping below the threshold removes the feat, and rerolling a check lets **Apply** cleanly replace the previous outcome.
+- **GM settings** (under **Configure Settings**):
+  - **Befriend: allow skill check rolls** (default on): Disable to hide the roll option and skill/DC fields, leaving GM-recorded standing changes only (players still use `/befriend` as a read-only standings view).
+  - **Befriend: attitude required to befriend** (default **Helpful**): Choose whether a student counts as befriended at **Helpful** or **Friendly**.
 
 ## Local development
 
