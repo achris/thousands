@@ -222,7 +222,7 @@ export async function applyBefriend(
       const idx = notes.lastIndexOf(prev.note);
       if (idx >= 0) notes.splice(idx, 1);
     }
-    students[entry.student] = { attitude: prev.previous, ...(notes.length ? { notes } : {}) };
+    students[entry.student] = { attitude: prev.previous, notes };
     if (prev.grantedFeat) {
       const owned = ownedItem(actor, option);
       if (owned) await actor.deleteEmbeddedDocuments("Item", [owned.id]);
@@ -244,7 +244,7 @@ export async function applyBefriend(
     ...(students[entry.student]?.notes ?? []),
     ...(entry.note ? [entry.note] : []),
   ].slice(-MAX_STUDENT_NOTES);
-  students[entry.student] = { attitude: planned.next, ...(notes.length ? { notes } : {}) };
+  students[entry.student] = { attitude: planned.next, notes };
   const applied = {
     ...(cur.applied ?? {}),
     [entry.id]: {
@@ -253,7 +253,7 @@ export async function applyBefriend(
       next: planned.next,
       grantedFeat: planned.grantFeat,
       removedFeat: planned.removeFeat,
-      ...(entry.note ? { note: entry.note } : {}),
+      note: entry.note ?? "",
     },
   };
   await actor.setFlag(MODULE_ID, "befriend", { students, applied });

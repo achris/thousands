@@ -262,17 +262,22 @@ const foundryBefriendUi: BefriendUi = {
   newId: () => foundry.utils.randomID(),
 };
 
+const isCharacter = (a?: BefriendActor | null): a is BefriendActor =>
+  !!a && (!a.type || a.type === "character");
+
 export async function befriend(actor?: BefriendActor | null): Promise<void> {
   const isGM = game.user.isGM;
-  const selected = canvas.tokens?.controlled[0]?.actor ?? game.user.character ?? null;
+  const controlled = canvas.tokens?.controlled.find((t) => isCharacter(t.actor))?.actor ?? null;
+  const assigned = isCharacter(game.user.character) ? game.user.character : null;
+  const selected = controlled ?? assigned;
   const candidates = actor
-    ? [actor]
+    ? isCharacter(actor)
+      ? [actor]
+      : []
     : isGM
       ? [
           ...(selected ? [selected] : []),
-          ...[...(game.actors ?? [])].filter(
-            (a) => (!a.type || a.type === "character") && a !== selected,
-          ),
+          ...[...(game.actors ?? [])].filter((a) => isCharacter(a) && a !== selected),
         ]
       : selected
         ? [selected]
@@ -287,11 +292,14 @@ export async function befriend(actor?: BefriendActor | null): Promise<void> {
 function resolveTargets(message: MessageLike, actorIds?: readonly string[]): BefriendActor[] {
   if (actorIds?.length) {
     const byId = new Map(
-      [...(game.actors ?? [])].flatMap((a) => (a.id ? [[a.id, a] as const] : [])),
+      [...(game.actors ?? [])].flatMap((a) =>
+        a.id && isCharacter(a) ? [[a.id, a] as const] : [],
+      ),
     );
     return actorIds.flatMap((id) => byId.get(id) ?? []);
   }
-  return message.actor ? [message.actor as BefriendActor] : [];
+  const actor = message.actor as BefriendActor | null | undefined;
+  return isCharacter(actor) ? [actor] : [];
 }
 
 export function renderBefriendCard(message: MessageLike, html: HTMLElement, isGM: boolean): void {

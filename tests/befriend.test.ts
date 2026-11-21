@@ -37,7 +37,21 @@ import type { StatisticLike } from "../src/study/roll.js";
 
 afterEach(() => vi.unstubAllGlobals());
 
-function makeActor(id: string, name: string, ownedStudents: StudentId[] = []) {
+function mergeObjects(
+  base: Record<string, unknown>,
+  update: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...base };
+  for (const [k, v] of Object.entries(update)) {
+    const cur = out[k];
+    const isPlain = (x: unknown): x is Record<string, unknown> =>
+      !!x && typeof x === "object" && !Array.isArray(x);
+    out[k] = isPlain(cur) && isPlain(v) ? mergeObjects(cur, v) : structuredClone(v);
+  }
+  return out;
+}
+
+function makeActor(id: string, name: string, ownedStudents: StudentId[] = [], type = "character") {
   let next = 0;
   const skill = (slug: string, label = slug): [string, StatisticLike] => [
     slug,
@@ -46,7 +60,7 @@ function makeActor(id: string, name: string, ownedStudents: StudentId[] = []) {
   const actor = {
     id,
     name,
-    type: "character",
+    type,
     level: 2,
     flag: {} as BefriendFlags,
     items: ownedStudents.map((s) => ({
@@ -56,7 +70,12 @@ function makeActor(id: string, name: string, ownedStudents: StudentId[] = []) {
     skills: Object.fromEntries([skill("diplomacy", "Diplomacy"), skill("society", "Society")]),
     getFlag: (_scope: string, key: string) => (key === "befriend" ? actor.flag : undefined),
     setFlag: async (_scope: string, key: string, value: unknown) => {
-      if (key === "befriend") actor.flag = value as BefriendFlags;
+      if (key === "befriend") {
+        actor.flag = mergeObjects(
+          actor.flag as Record<string, unknown>,
+          value as Record<string, unknown>,
+        ) as BefriendFlags;
+      }
     },
     createEmbeddedDocuments: vi.fn(async (_type: "Item", sources: object[]) => {
       for (const s of sources as { system: { slug: string } }[])
@@ -173,6 +192,14 @@ describe("befriend rules and state", () => {
       ownsFeat: false,
       notes: ["Cricket favor"],
     });
+
+    // Rerolling without a note clears the old note and does not leave a stale note in applied.
+    await applyBefriend(
+      actor,
+      { id: "r1", student: "chizire", change: { kind: "delta", steps: 1 }, key: "success-no-note" },
+      "friendly",
+    );
+    expect(readBefriendState(actor, "friendly").chizire.notes).toEqual([]);
   });
 
   it("parses rolled checks, party direct records, allowRolls setting, and renders Apply cards", async () => {
@@ -305,6 +332,26 @@ describe("befriend rules and state", () => {
     expect(gmNoRoll.content).toContain('value="party"');
     expect(gmNoRoll.content).not.toContain('value="roll"');
     expect(gmNoRoll.buttons.map((b) => b.label)).toEqual(["Record"]);
+
+    // Controlled non-character tokens are excluded for both GM and player, falling back to character.
+    const npc = makeActor("npc1", "Pugwampi", [], "npc");
+    vi.stubGlobal("canvas", { tokens: { controlled: [{ actor: npc }] } });
+    (globalThis as unknown as { game: { actors: BefriendActor[] } }).game.actors = [a1, a2, npc];
+    await befriend();
+    const gmNpcSelected = wait.mock.calls.at(-1)![0];
+    expect(gmNpcSelected.content).not.toContain("Pugwampi");
+    expect(gmNpcSelected.content).toContain("Nia");
+
+    (globalThis as unknown as { game: { user: { isGM: boolean } } }).game.user.isGM = false;
+    (
+      globalThis as unknown as {
+        game: { settings: { get: (_s: string, k: string) => unknown } };
+      }
+    ).game.settings.get = (_s: string, k: string) =>
+      k === "befriendAllowRolls" ? true : BEFRIEND_SETTINGS.befriendThreshold.default;
+    await befriend();
+    expect(wait.mock.calls.at(-1)![0].content).toContain("Nia");
+    expect(wait.mock.calls.at(-1)![0].content).not.toContain("Pugwampi");
 
     const listeners: Record<string, () => Promise<void>> = {};
     vi.stubGlobal("document", {
