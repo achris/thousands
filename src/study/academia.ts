@@ -6,30 +6,38 @@ import {
   BRANCH_IDS,
   CRAM_FLAT_DC,
   MAX_BRANCH_LEVEL,
+  MAX_TREASURE_POINTS,
   RANKS,
+  RESEARCH_SITES,
   STUDENTS,
   STUDENT_IDS,
   applyStudyOutcome,
   autoAdvanceOnLevelUp,
   evenLevelsCrossed,
+  researchDegree,
   resolveStarOnLevelUp,
+  siteTally,
   suppressesCramFatigue,
   type BranchId,
   type BranchKind,
   type BranchState,
   type DegreeOfSuccess,
   type Rank,
+  type ResearchSiteId,
+  type SiteResult,
   type StudentId,
 } from "../rules/index.js";
 
 export type AppliedDegree = DegreeOfSuccess | "skipped" | "starred" | "auto";
 
 /** What an applied result changed, kept so a second Apply or a reroll cannot stack. */
-export interface AppliedRecord {
+export interface AppliedRecord extends SiteResult {
   degree: AppliedDegree;
   delta: number;
   star: boolean;
   skip: boolean;
+  /** Condition value before and after a site's critical failure raised it. */
+  condition?: { slug: "doomed" | "drained"; from: number; to: number };
 }
 
 /** Stored under `flags.thousands.study`; everything else about a character lives in its feats. */
@@ -50,8 +58,12 @@ export interface ActorLike {
   setFlag(scope: string, key: string, value: unknown): Promise<unknown>;
   createEmbeddedDocuments(type: "Item", sources: object[]): Promise<unknown>;
   deleteEmbeddedDocuments(type: "Item", ids: string[]): Promise<unknown>;
-  increaseCondition?(slug: "fatigued"): Promise<unknown>;
-  decreaseCondition?(slug: "fatigued"): Promise<unknown>;
+  increaseCondition?(
+    slug: "fatigued" | "doomed" | "drained",
+    options?: { value: number; max: number },
+  ): Promise<unknown>;
+  decreaseCondition?(slug: "fatigued" | "doomed" | "drained"): Promise<unknown>;
+  getCondition?(slug: "doomed" | "drained"): { value: number | null } | null;
 }
 
 export interface AcademiaState {
@@ -116,10 +128,47 @@ export interface StudyEntry {
   level?: number;
   cap?: number;
   note?: string;
+  /** Practical Research site preset. */
+  site?: ResearchSiteId;
+  /** False when a site needs telepathy and the researcher lacks it. */
+  telepathy?: boolean;
+}
+
+/** Chat-card lines for a result at a Practical Research site. */
+export function siteNotes(state: AcademiaState, entry: StudyEntry, outcome: Required<SiteResult>) {
+  const { site, result } = outcome;
+  const info = RESEARCH_SITES[site];
+  const others = Object.entries(state.flags.applied ?? {}).flatMap(([id, r]) =>
+    id === entry.id ? [] : [r],
+  );
+  const before = siteTally(others, site);
+  const applied = state.flags.applied?.[entry.id]?.degree === entry.degree;
+  const after = siteTally([...others, outcome], site);
+  const consequence = {
+    criticalSuccess: info.critSuccess,
+    success: undefined,
+    failure: undefined,
+    criticalFailure: info.critFailure,
+  }[result];
+  return [
+    ...(result !== entry.degree ? ["no telepathy: result is one degree worse"] : []),
+    ...(consequence ? [consequence] : []),
+    ...(info.treasure
+      ? [
+          `Treasure Points ${applied ? "" : `${before.treasure} → `}${after.treasure} (max ${MAX_TREASURE_POINTS})`,
+        ]
+      : []),
+    ...(after.penalty
+      ? [`${after.penalty} circumstance penalty to later research at ${info.label}`]
+      : []),
+  ];
 }
 
 /** Works out what applying an entry would change, without touching the actor. */
-export function planStudy(state: AcademiaState, entry: StudyEntry) {
+export function planStudy(
+  state: AcademiaState,
+  entry: StudyEntry,
+): { record: AppliedRecord; feats: PF2eFeatSource[]; flags: StudyFlags; summary: string } {
   const { skipNext = false, cramFatigue = false } = state.flags;
   const auto = state.flags.autoLevels ? { autoLevels: state.flags.autoLevels } : {};
   if (entry.degree === "skipped") {
@@ -180,10 +229,17 @@ export function planStudy(state: AcademiaState, entry: StudyEntry) {
     };
   }
   const advantages = state.advantages ?? [];
-  const result = applyStudyOutcome(branch, entry.kind, state.characterLevel, entry.degree, {
+  const { site } = entry;
+  const outcome = site && {
+    site,
+    result: researchDegree(entry.degree, site, entry.telepathy ?? true),
+  };
+  const degree = outcome ? outcome.result : entry.degree;
+  const result = applyStudyOutcome(branch, entry.kind, state.characterLevel, degree, {
     activity: entry.activity,
     branchId: branch.id,
     advantages,
+    ...(site ? { site } : {}),
   });
   const star = result.starred && !branch.starred;
   const feats: PF2eFeatSource[] = [];
@@ -214,10 +270,17 @@ export function planStudy(state: AcademiaState, entry: StudyEntry) {
       ? [`Classroom Advantage (${STUDENTS[fatigueStudent].label}): avoids Cram fatigue`]
       : []),
     ...(cramFatigue && study ? ["clears Cram fatigue"] : []),
+    ...(outcome ? siteNotes(state, entry, outcome) : []),
     ...(entry.note ? [entry.note] : []),
   ];
   return {
-    record: { degree: entry.degree, delta: result.delta, star, skip: result.skipNext },
+    record: {
+      degree: entry.degree,
+      delta: result.delta,
+      star,
+      skip: result.skipNext,
+      ...outcome,
+    },
     feats,
     flags: {
       ...auto,
@@ -227,6 +290,9 @@ export function planStudy(state: AcademiaState, entry: StudyEntry) {
     summary: `${notes.join("; ")}.`,
   };
 }
+
+const conditionValue = (actor: ActorLike, slug: "doomed" | "drained") =>
+  actor.getCondition?.(slug)?.value ?? 0;
 
 /** Applies an entry once; a different result for the same entry (a reroll) replaces the old one. */
 export async function applyStudy(actor: ActorLike, entry: StudyEntry): Promise<boolean> {
@@ -241,6 +307,12 @@ export async function applyStudy(actor: ActorLike, entry: StudyEntry): Promise<b
       (previous.degree === "failure" || previous.degree === "criticalFailure")
     ) {
       await actor.decreaseCondition?.("fatigued");
+    }
+    if (previous.condition) {
+      const { slug, from, to } = previous.condition;
+      for (let n = Math.min(conditionValue(actor, slug), to) - from; n > 0; n--) {
+        await actor.decreaseCondition?.(slug);
+      }
     }
     const branch = entry.kind && state.branches[entry.kind];
     const options = branch
@@ -264,6 +336,18 @@ export async function applyStudy(actor: ActorLike, entry: StudyEntry): Promise<b
     (entry.degree === "failure" || entry.degree === "criticalFailure")
   ) {
     await actor.increaseCondition?.("fatigued");
+  }
+  const condition =
+    record.site && record.result === "criticalFailure"
+      ? RESEARCH_SITES[record.site].condition
+      : undefined;
+  if (condition) {
+    const { slug, value } = condition;
+    const from = conditionValue(actor, slug);
+    if (from < value) {
+      await actor.increaseCondition?.(slug, { value, max: value });
+      record.condition = { slug, from, to: conditionValue(actor, slug) };
+    }
   }
   const sources = feats.map((feat) => structuredClone(feat));
   if (sources.length > 0) await actor.createEmbeddedDocuments("Item", sources);

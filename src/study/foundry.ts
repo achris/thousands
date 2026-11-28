@@ -5,8 +5,11 @@ import {
   BRANCHES,
   CRAM_FLAT_DC,
   RANK_LABELS,
-  dcForLevel,
+  RESEARCH_SITES,
+  RESEARCH_SITE_IDS,
   isRank,
+  isResearchSiteId,
+  researchDc,
   resolveStarOnLevelUp,
   type BranchKind,
   type DegreeOfSuccess,
@@ -32,6 +35,7 @@ import {
 } from "./promote.js";
 import {
   fatigueOption,
+  researchSkillChoices,
   startResearch,
   startStudy,
   type CheckChoice,
@@ -43,7 +47,9 @@ import {
 } from "./roll.js";
 
 type Hook = (...args: never[]) => unknown;
-type PickButton = { form: { elements: { namedItem(name: string): { value: string } | null } } };
+type PickButton = {
+  form: { elements: { namedItem(name: string): { value: string; checked?: boolean } | null } };
+};
 
 export interface ActorUpdateChanges {
   system?: { details?: { level?: { value?: number } } };
@@ -71,6 +77,7 @@ declare const game: {
       roll(check: unknown, context?: Record<string, unknown>): Promise<unknown>;
     };
     CheckModifier?: new (slug: string, statistic: { modifiers: never[] }) => unknown;
+    Modifier?: new (data: object) => object;
   };
   settings: {
     register(scope: string, key: string, config: object): void;
@@ -195,16 +202,38 @@ const foundryUi: StudyUi & ResearchUi & PromoteUi = {
         const label = actors.length === 1 && b ? `${k} (${BRANCHES[b.id].label} ${b.level})` : k;
         return `<option value="${k}">${esc(label)}</option>`;
       });
-    const skills = new Map(
-      actors.flatMap((a) => Object.values(a.skills).map((s) => [s.slug, s.label] as const)),
-    );
-    const skillOpts = [
-      ...[...skills].map(([slug, label]) => `<option value="${esc(slug)}">${esc(label)}</option>`),
-      `<option value="">(none)</option>`,
+    const siteOpts = [
+      `<option value="">Freeform (any skill)</option>`,
+      ...RESEARCH_SITE_IDS.map((id) => {
+        const { label, source, duration } = RESEARCH_SITES[id];
+        return `<option value="${id}">${esc(`${label} (${source}; ${duration})`)}</option>`;
+      }),
     ];
-    const defaultDc = dcForLevel(
-      state.branches.primary?.level ?? state.branches.secondary?.level ?? 0,
-    );
+    /** Skill options and standard DC for the character, branch, and site now selected. */
+    const choicesFor = (actor: StudyActor, kind: string, siteId: string) => {
+      const { branches } = readState(actor);
+      const branch =
+        branches[kind === "secondary" ? "secondary" : "primary"] ??
+        branches.primary ??
+        branches.secondary;
+      const site = isResearchSiteId(siteId) ? siteId : undefined;
+      const skills = site
+        ? branch
+          ? researchSkillChoices(actor, branch.id, site)
+          : []
+        : actors.flatMap((a) => Object.values(a.skills));
+      const options = new Map(skills.map((s) => [s.slug, s.label]));
+      return {
+        skills: [
+          ...[...options].map(
+            ([slug, label]) => `<option value="${esc(slug)}">${esc(label)}</option>`,
+          ),
+          `<option value="">(none)</option>`,
+        ].join(""),
+        dc: researchDc(branch?.level ?? 0, site),
+      };
+    };
+    const initial = choicesFor(actors[0]!, "primary", "");
     const outcomeOpts = [
       `<option value="">Roll check</option>`,
       ...(Object.entries(DEGREE_LABELS) as [DegreeOfSuccess, string][]).map(
@@ -216,12 +245,39 @@ const foundryUi: StudyUi & ResearchUi & PromoteUi = {
       window: { title: "Practical Research" },
       content: [
         `<label>Character <select name="actor">${actorOpts.join("")}</select></label>`,
+        `<label>Site <select name="site">${siteOpts.join("")}</select></label>`,
+        `<label class="thousands-telepathy" style="display: none"><input type="checkbox" name="telepathy"> Has Telepathy</label>`,
         `<label>Branch <select name="kind">${kindOpts.join("")}</select></label>`,
-        `<label>Skill <select name="skill">${skillOpts.join("")}</select></label>`,
-        `<label>DC <input type="number" name="dc" value="${defaultDc}" min="1"></label>`,
+        `<label>Skill <select name="skill">${initial.skills}</select></label>`,
+        `<label>DC <input type="number" name="dc" value="${initial.dc}" min="1"></label>`,
         `<label>Outcome <select name="outcome">${outcomeOpts.join("")}</select></label>`,
         `<label>Reward note <input type="text" name="note"></label>`,
       ].join(""),
+      render: (_event: unknown, dialog: { element?: HTMLElement }) => {
+        const find = <T extends Element>(selector: string) =>
+          dialog?.element?.querySelector<T>(selector);
+        const actorEl = find<HTMLSelectElement>('select[name="actor"]');
+        const siteEl = find<HTMLSelectElement>('select[name="site"]');
+        const kindEl = find<HTMLSelectElement>('select[name="kind"]');
+        const skillEl = find<HTMLSelectElement>('select[name="skill"]');
+        const dcEl = find<HTMLInputElement>('input[name="dc"]');
+        const telepathyEl = find<HTMLElement>(".thousands-telepathy");
+        if (!actorEl || !siteEl || !kindEl || !skillEl || !dcEl || !telepathyEl) return;
+        // A DC the GM typed is kept through later selection changes.
+        let typedDc = false;
+        dcEl.addEventListener("input", () => (typedDc = true));
+        const sync = () => {
+          const actor = actors[Number(actorEl.value)] ?? actors[0]!;
+          const next = choicesFor(actor, kindEl.value, siteEl.value);
+          const skill = skillEl.value;
+          skillEl.innerHTML = next.skills;
+          if ([...skillEl.options].some((o) => o.value === skill)) skillEl.value = skill;
+          if (!typedDc) dcEl.value = String(next.dc);
+          const site = isResearchSiteId(siteEl.value) ? RESEARCH_SITES[siteEl.value] : undefined;
+          telepathyEl.style.display = site?.needsTelepathy ? "" : "none";
+        };
+        for (const el of [actorEl, siteEl, kindEl]) el.addEventListener("change", sync);
+      },
       buttons: [
         {
           action: "research",
@@ -230,11 +286,14 @@ const foundryUi: StudyUi & ResearchUi & PromoteUi = {
             const actor = actors[Number(val(b, "actor"))];
             const kind = val(b, "kind") as BranchKind;
             if (!actor || (kind !== "primary" && kind !== "secondary")) return null;
+            const rawSite = val(b, "site");
+            const site = isResearchSiteId(rawSite) ? rawSite : undefined;
+            const telepathy = !!b.form.elements.namedItem("telepathy")?.checked;
             const skill = val(b, "skill") || undefined;
             const dc = Number(val(b, "dc")) || undefined;
             const outcome = (val(b, "outcome") || undefined) as DegreeOfSuccess | undefined;
             const note = val(b, "note").trim() || undefined;
-            return { actor, kind, skill, dc, outcome, note };
+            return { actor, kind, site, telepathy, skill, dc, outcome, note };
           },
         },
       ],
@@ -325,21 +384,31 @@ const foundryUi: StudyUi & ResearchUi & PromoteUi = {
   postSkip: (actor, id) =>
     ChatMessage.create({
       speaker: ChatMessage.getSpeaker({ actor }),
-      content: `<p>${foundry.utils.escapeHTML(actor.name)} must skip this Study opportunity after a critical failure.</p>`,
+      content: `<p>${foundry.utils.escapeHTML(actor.name)} must skip this opportunity after a critical failure.</p>`,
       flags: { [MODULE_ID]: { skip: id } },
     }),
   postResearch: (actor, data) => {
     const branchId = readState(actor).branches[data.kind]?.id;
     const branchLabel = branchId ? BRANCHES[branchId].label : data.kind;
+    const site = data.site
+      ? ` at ${foundry.utils.escapeHTML(RESEARCH_SITES[data.site].label)}`
+      : "";
     const checkParts = [data.check, data.dc ? `DC ${data.dc}` : ""].filter(Boolean).join(" ");
     const check = checkParts ? ` (${foundry.utils.escapeHTML(checkParts)})` : "";
     const note = data.note ? ` — ${foundry.utils.escapeHTML(data.note)}` : "";
     return ChatMessage.create({
       speaker: ChatMessage.getSpeaker({ actor }),
-      content: `<p>${foundry.utils.escapeHTML(actor.name)} completes Practical Research for ${foundry.utils.escapeHTML(branchLabel)}${check}: ${DEGREE_LABELS[data.degree]}${note}.</p>`,
+      content: `<p>${foundry.utils.escapeHTML(actor.name)} completes Practical Research${site} for ${foundry.utils.escapeHTML(branchLabel)}${check}: ${DEGREE_LABELS[data.degree]}${note}.</p>`,
       flags: { [MODULE_ID]: { research: data } },
     });
   },
+  circumstance: (label, value) =>
+    new game.pf2e!.Modifier!({
+      slug: "research-site",
+      label,
+      modifier: value,
+      type: "circumstance",
+    }),
   setting: (key: StudySetting) =>
     (game.settings.get(MODULE_ID, key) ?? STUDY_SETTINGS[key].default) === true,
   newId: () => foundry.utils.randomID(),

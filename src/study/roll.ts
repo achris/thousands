@@ -1,15 +1,21 @@
 import {
   BRANCHES,
   MAX_BRANCH_LEVEL,
+  RESEARCH_SITES,
   STUDENTS,
   applyStudyOutcome,
   canDoActivity,
   cramCheckCount,
   cramEligibility,
   dcForLevel,
+  isResearchSiteId,
+  researchDc,
+  researchSkills,
+  siteTally,
   type BranchId,
   type BranchKind,
   type DegreeOfSuccess,
+  type ResearchSiteId,
 } from "../rules/index.js";
 import {
   readState,
@@ -29,6 +35,7 @@ export interface StatisticLike {
     label: string;
     traits: string[];
     extraRollOptions: string[];
+    modifiers?: object[];
     callback?: (roll: unknown, outcome: DegreeOfSuccess | null | undefined) => void;
   }): Promise<unknown>;
 }
@@ -58,6 +65,7 @@ const KINDS: BranchKind[] = ["primary", "secondary"];
 export const STUDY_OPTION =
   /^thousands:study:([\w-]+):(?:(fatigue)|(?:(study|cram|practical-research):)?(primary|secondary))$/;
 export const RESEARCH_NOTE_PREFIX = "thousands:research-note:";
+const RESEARCH_SITE_PREFIX = "thousands:research-site:";
 
 /** Roll option that marks a check as a Study, Cram, or Practical Research roll; PF2e carries it over to rerolls. */
 export const studyOption = (id: string, activity: StudyActivity, kind: BranchKind) =>
@@ -70,6 +78,19 @@ export const studyBranchOption = (branchId: BranchId) => `study-check:branch:${b
 export const researchNoteOption = (note: string) =>
   `${RESEARCH_NOTE_PREFIX}${encodeURIComponent(note)}`;
 
+/** Roll option that carries the Practical Research site (and any lack of telepathy) on a check roll. */
+export const researchSiteOption = (site: ResearchSiteId, telepathy?: boolean) =>
+  `${RESEARCH_SITE_PREFIX}${site}${telepathy === false ? ":no-telepathy" : ""}`;
+
+export function parseResearchSiteOption(
+  option: string,
+): { site: ResearchSiteId; telepathy?: false } | null {
+  if (!option.startsWith(RESEARCH_SITE_PREFIX)) return null;
+  const [site, flag] = option.slice(RESEARCH_SITE_PREFIX.length).split(":");
+  if (!isResearchSiteId(site)) return null;
+  return { site, ...(flag === "no-telepathy" ? { telepathy: false as const } : {}) };
+}
+
 /** Roll option that marks a flat check as a Cram daily fatigue roll. */
 export const fatigueOption = (id: string) => `thousands:study:${id}:fatigue`;
 
@@ -77,6 +98,8 @@ export interface ResearchFlag {
   id: string;
   kind: BranchKind;
   degree: DegreeOfSuccess;
+  site?: ResearchSiteId;
+  telepathy?: boolean;
   check?: string;
   dc?: number;
   note?: string;
@@ -85,6 +108,8 @@ export interface ResearchFlag {
 export interface ResearchPick {
   actor: StudyActor;
   kind: BranchKind;
+  site?: ResearchSiteId;
+  telepathy?: boolean;
   skill?: string;
   dc?: number;
   outcome?: DegreeOfSuccess;
@@ -95,6 +120,9 @@ export interface ResearchUi {
   pickResearch(actors: readonly StudyActor[]): Promise<ResearchPick | null>;
   warn(text: string): void;
   postResearch(actor: StudyActor, data: ResearchFlag): Promise<unknown>;
+  postSkip: StudyUi["postSkip"];
+  /** A PF2e circumstance modifier to add to a single check. */
+  circumstance(label: string, value: number): object;
   newId(): string;
 }
 
@@ -242,6 +270,18 @@ export async function startStudy(actor: StudyActor, ui: StudyUi): Promise<void> 
   }
 }
 
+/** Skills offered for Practical Research: any when freeform, else the branch's and the site's. */
+export function researchSkillChoices(
+  actor: StudyActor,
+  branchId: BranchId,
+  site?: ResearchSiteId,
+): StatisticLike[] {
+  const all = Object.values(actor.skills);
+  if (!site) return all;
+  const slugs = researchSkills(branchId, site);
+  return all.filter((s) => slugs.includes(s.slug) || (s.lore && slugs.includes("lore")));
+}
+
 function validateResearchActor(actor: StudyActor, ui: ResearchUi): AcademiaState | null {
   const state = readState(actor);
   if (!canDoActivity("practical-research", state.rank)) {
@@ -271,11 +311,19 @@ export async function startResearch(
   if (!picked) return;
   const state = validateResearchActor(picked.actor, ui);
   if (!state) return;
+  if (state.flags.skipNext) {
+    await ui.postSkip(picked.actor, ui.newId());
+    return;
+  }
   const branch = state.branches[picked.kind];
   if (!branch) {
     return ui.warn(`${picked.actor.name} has no ${picked.kind} branch feat.`);
   }
   const note = picked.note?.trim() || undefined;
+  const { site } = picked;
+  const info = site && RESEARCH_SITES[site];
+  const telepathy = info?.needsTelepathy && picked.telepathy === false ? false : undefined;
+  const tally = site && siteTally(Object.values(state.flags.applied ?? {}), site);
   const id = ui.newId();
   const dc =
     picked.dc !== undefined && Number.isFinite(picked.dc) && picked.dc > 0 ? picked.dc : undefined;
@@ -285,6 +333,8 @@ export async function startResearch(
       id,
       kind: picked.kind,
       degree: picked.outcome,
+      ...(site ? { site } : {}),
+      ...(telepathy === false ? { telepathy } : {}),
       ...(check ? { check } : {}),
       ...(dc !== undefined ? { dc } : {}),
       ...(note ? { note } : {}),
@@ -296,11 +346,13 @@ export async function startResearch(
     return ui.warn("Choose a skill to roll or select an outcome to record.");
   }
   await statistic.roll({
-    dc: dc ?? dcForLevel(branch.level),
-    label: `Practical Research: ${BRANCHES[branch.id].label} (${statistic.label})`,
+    dc: dc ?? researchDc(branch.level, site),
+    label: `Practical Research${info ? ` at ${info.label}` : ""}: ${BRANCHES[branch.id].label} (${statistic.label})`,
+    ...(info && tally?.penalty ? { modifiers: [ui.circumstance(info.label, tally.penalty)] } : {}),
     traits: ["downtime"],
     extraRollOptions: [
       studyOption(id, "practical-research", picked.kind),
+      ...(site ? [researchSiteOption(site, telepathy)] : []),
       ...(note ? [researchNoteOption(note)] : []),
       "downtime",
     ],

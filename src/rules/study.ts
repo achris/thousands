@@ -6,6 +6,7 @@ import {
   type StudentId,
 } from "./branches.js";
 import { MAX_BRANCH_LEVEL } from "./dc.js";
+import { RESEARCH_SITES, type ResearchSiteId } from "./research.js";
 
 export type DegreeOfSuccess = "criticalSuccess" | "success" | "failure" | "criticalFailure";
 
@@ -59,7 +60,8 @@ const RANKS_FOR: Record<Activity, readonly Rank[]> = {
 };
 
 /** Branch level cap: primary is the character level, secondary is half (rounded down). */
-export function branchCap(kind: BranchKind, characterLevel: number): number {
+export function branchCap(kind: BranchKind, characterLevel: number, site?: ResearchSiteId): number {
+  if (site && RESEARCH_SITES[site].uncapped) return MAX_BRANCH_LEVEL;
   const base = kind === "primary" ? characterLevel : Math.floor(characterLevel / 2);
   return Math.max(0, Math.min(MAX_BRANCH_LEVEL, base));
 }
@@ -72,6 +74,8 @@ export interface StudyAdvantageContext {
   activity: Activity;
   branchId: BranchId;
   advantages?: Iterable<StudentId>;
+  /** Practical Research site whose cap and critical-failure rules apply. */
+  site?: ResearchSiteId;
 }
 
 function matchingAdvantage(
@@ -133,7 +137,8 @@ export function applyStudyOutcome(
   const adjusted = context
     ? adjustStudyDegree(degree, context.activity, context.branchId, context.advantages)
     : { degree };
-  const cap = branchCap(kind, characterLevel);
+  const site = context?.site;
+  const cap = branchCap(kind, characterLevel, site);
   const gain = GAIN[adjusted.degree];
   const delta = Math.max(0, Math.min(gain, cap - state.level));
   // At the absolute maximum there is nothing to carry over.
@@ -142,7 +147,8 @@ export function applyStudyOutcome(
     state: { level: state.level + delta, starred: state.starred || starred },
     delta,
     starred,
-    skipNext: adjusted.degree === "criticalFailure",
+    // A site's own critical-failure rule replaces the skipped opportunity unless it says otherwise.
+    skipNext: adjusted.degree === "criticalFailure" && (!site || !!RESEARCH_SITES[site].skipNext),
     ...(adjusted.student ? { advantage: adjusted.student } : {}),
   };
 }

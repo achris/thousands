@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { BranchId, DegreeOfSuccess, Rank, StudentId } from "../src/rules/index.js";
+import {
+  siteTally,
+  type BranchId,
+  type DegreeOfSuccess,
+  type Rank,
+  type ResearchSiteId,
+  type StudentId,
+} from "../src/rules/index.js";
 import { describeEntry, entryFromMessage, type MessageLike } from "../src/study/chat.js";
 import {
   STUDY_SETTINGS,
@@ -12,6 +19,7 @@ import {
 import {
   fatigueOption,
   researchNoteOption,
+  researchSiteOption,
   startResearch,
   startStudy,
   studyBranchOption,
@@ -78,8 +86,15 @@ function makeActor(top: number, secondaryTop = 0, rank?: Rank) {
     deleteEmbeddedDocuments: async (_type: "Item", ids: string[]) => {
       actor.items = actor.items.filter((item) => !ids.includes(item.id));
     },
-    increaseCondition: vi.fn(async () => undefined),
-    decreaseCondition: vi.fn(async () => undefined),
+    conditions: {} as Record<string, number>,
+    getCondition: (slug: string) => ({ value: actor.conditions[slug] ?? 0 }),
+    increaseCondition: vi.fn(async (slug: string, options?: { value: number; max: number }) => {
+      const { value = 1, max = Infinity } = options ?? {};
+      actor.conditions[slug] = Math.min((actor.conditions[slug] ?? 0) + value, max);
+    }),
+    decreaseCondition: vi.fn(async (slug: string) => {
+      actor.conditions[slug] = Math.max(0, (actor.conditions[slug] ?? 0) - 1);
+    }),
   };
   return actor;
 }
@@ -358,7 +373,7 @@ describe("starting Study", () => {
     await study(explicit);
     expect(createChat).toHaveBeenCalledWith(
       expect.objectContaining({
-        content: "<p>Tester must skip this Study opportunity after a critical failure.</p>",
+        content: "<p>Tester must skip this opportunity after a critical failure.</p>",
         flags: { thousands: { skip: "skip-id" } },
       }),
     );
@@ -1083,6 +1098,8 @@ describe("Practical Research", () => {
       posted: [] as ResearchFlag[],
       warn: vi.fn(),
       newId: () => "pr-1",
+      circumstance: (label: string, value: number) => ({ label, value }),
+      postSkip: vi.fn(async () => undefined),
       pickResearch: vi.fn(async (actors: readonly ReturnType<typeof makeActor>[]) =>
         pickResult ? { actor: pickResult.actor ?? actors[0]!, ...pickResult } : null,
       ),
@@ -1220,6 +1237,112 @@ describe("Practical Research", () => {
     expect(await applyStudy(capActor, { id: "lvl-7", activity: "study", kind: "primary", degree: "starred", level: 7 })).toBe(true);
     // prettier-ignore
     expect(readState(capActor).branches.primary).toEqual({ id: "uzunjati", level: 7, starred: false });
+  });
+
+  const at = (site: ResearchSiteId, degree: Degree, id: string = site) =>
+    entry(degree, { id, site, activity: "practical-research" });
+
+  it.each([
+    ["bloodsalt", "next month recovering", undefined],
+    ["vacant-eye", "for 1 year", undefined],
+    ["mzali-necropolis", "permanently barred", ["doomed", 1]],
+    ["osibu", "serving the city", undefined],
+    ["red-star-doorway", "repairing the site", undefined],
+    ["hall-of-reason", "barred from this site for 1 week", ["drained", 2]],
+    ["endless-table", "-2 circumstance penalty", undefined],
+  ] as const)("applies the %s critical failure once", async (site, text, condition) => {
+    const actor = makeActor(2, 1, "conversant");
+    const failed = at(site, "criticalFailure");
+    expect(describeEntry(actor, failed).text).toContain(text);
+    await applyStudy(actor, failed);
+    await applyStudy(actor, failed);
+    expect(describeEntry(actor, failed).text).toContain(text);
+    expect(actor.flag.skipNext).toBe(site === "bloodsalt");
+    expect(actor.increaseCondition.mock.calls).toEqual(
+      condition ? [[condition[0], { value: condition[1], max: condition[1] }]] : [],
+    );
+    // A reroll takes back exactly the condition steps that were added.
+    await applyStudy(actor, { ...failed, degree: "success" });
+    expect(actor.decreaseCondition.mock.calls).toEqual(
+      Array(condition?.[1] ?? 0).fill([condition?.[0]]),
+    );
+    expect(siteTally(Object.values(actor.flag.applied!), site).penalty).toBe(0);
+  });
+
+  it.each([
+    ["undoes only the points gained", 1, 2, undefined, 1],
+    ["leaves a higher earlier value alone", 3, 3, undefined, 3],
+    ["leaves earlier points after the GM removed the gain", 1, 2, 1, 1],
+  ])("on a Hall of Reason reroll %s", async (_name, before, raised, removedTo, expected) => {
+    const actor = makeActor(2, 1, "conversant");
+    actor.conditions.drained = before;
+    const failed = at("hall-of-reason", "criticalFailure");
+    await applyStudy(actor, failed);
+    expect(actor.conditions.drained).toBe(raised);
+    if (removedTo !== undefined) actor.conditions.drained = removedTo;
+    await applyStudy(actor, { ...failed, degree: "success" });
+    expect(actor.conditions.drained).toBe(expected);
+  });
+
+  it("posts a skipped opportunity for /research after a Bloodsalt critical failure", async () => {
+    const actor = makeActor(2, 1, "lore-speaker");
+    await applyStudy(actor, at("bloodsalt", "criticalFailure"));
+    const ui = makeResearchUi({ kind: "primary", outcome: "success" });
+    await startResearch(actor, ui);
+    expect(ui.postSkip).toHaveBeenCalledWith(actor, "pr-1");
+    expect(ui.postResearch).not.toHaveBeenCalled();
+    await applyStudy(actor, { id: "pr-1", activity: "study", degree: "skipped" });
+    await startResearch(actor, ui);
+    expect(ui.postResearch).toHaveBeenCalledOnce();
+  });
+
+  it("totals Osibu Treasure Points to at most 4 and takes them back on a reroll", async () => {
+    const actor = makeActor(2, 1, "conversant");
+    const points = () => siteTally(Object.values(actor.flag.applied!), "osibu").treasure;
+    await applyStudy(actor, at("osibu", "criticalSuccess", "a"));
+    await applyStudy(actor, at("osibu", "failure", "b"));
+    expect(points()).toBe(3);
+    const third = at("osibu", "criticalSuccess", "c");
+    expect(describeEntry(actor, third).text).toContain("Treasure Points 3 → 4 (max 4)");
+    await applyStudy(actor, third);
+    expect(points()).toBe(4);
+    await applyStudy(actor, { ...third, degree: "criticalFailure" });
+    expect(points()).toBe(3);
+  });
+
+  it("raises a secondary branch past half level only at The Endless Table", async () => {
+    const actor = makeActor(2, 3, "lore-speaker");
+    const gain = at("endless-table", "criticalSuccess");
+    await applyStudy(actor, { ...gain, kind: "secondary" });
+    expect(readState(actor).branches.secondary).toMatchObject({ level: 5, starred: false });
+  });
+
+  it("carries the site, DC, telepathy, and cumulative penalty through a rolled check", async () => {
+    const actor = makeActor(2, 1, "conversant");
+    const ui = makeResearchUi({ kind: "primary", skill: "arcana", site: "hall-of-reason", telepathy: false }); // prettier-ignore
+    await startResearch(actor, ui);
+    const options = [
+      studyOption("pr-1", "practical-research", "primary"),
+      researchSiteOption("hall-of-reason", false),
+    ];
+    expect(actor.skills.arcana?.roll).toHaveBeenLastCalledWith(
+      expect.objectContaining({ dc: 21, extraRollOptions: [...options, "downtime"] }),
+    );
+    const rolled = entryFromMessage({
+      actor,
+      flags: { pf2e: { context: { options, outcome: "failure" } } },
+      update: async () => undefined,
+    })!;
+    expect(describeEntry(actor, rolled).text).toContain("one degree worse; drained 2");
+    await applyStudy(actor, rolled);
+    expect(actor.increaseCondition).toHaveBeenCalledWith("drained", { value: 2, max: 2 });
+
+    await applyStudy(actor, at("endless-table", "criticalFailure", "e1"));
+    await applyStudy(actor, at("endless-table", "criticalFailure", "e2"));
+    await startResearch(actor, makeResearchUi({ kind: "primary", skill: "arcana", site: "endless-table" })); // prettier-ignore
+    expect(actor.skills.arcana?.roll).toHaveBeenLastCalledWith(
+      expect.objectContaining({ modifiers: [{ label: "The Endless Table", value: -4 }] }),
+    );
   });
 
   it("handles /research and api.research() for the GM and posts the Apply card", async () => {

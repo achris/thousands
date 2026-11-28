@@ -16,6 +16,9 @@ import {
   cramCheckCount,
   cramEligibility,
   dcForLevel,
+  researchDc,
+  researchDegree,
+  researchSkills,
   evenLevelsCrossed,
   resolveStarOnLevelUp,
   suppressesCramFatigue,
@@ -259,5 +262,16 @@ describe("classroom advantages", () => {
     expect(suppressesCramFatigue("cram", "uzunjati", ["okoro-obiyo"])).toBe("okoro-obiyo");
     expect(suppressesCramFatigue("cram", "uzunjati", ["chizire"])).toBeUndefined();
     expect([cramCheckCount("rain-scribes", ["haibram-thodja"]), cramCheckCount("rain-scribes"), cramCheckCount("uzunjati", ["haibram-thodja"])]).toEqual([3, 2, 2]);
+  });
+});
+
+describe("practical research sites", () => {
+  it("adds site skills, Very Hard DC, and the telepathy degree shift", () => {
+    expect(researchSkills("uzunjati", "bloodsalt")).toEqual(["crafting", "lore", "diplomacy"]);
+    expect(researchSkills("cascade-bearers", "hall-of-reason")).toContain("occultism");
+    expect([researchDc(10), researchDc(10, "osibu"), researchDc(10, "hall-of-reason")]).toEqual([27, 27, 32]); // prettier-ignore
+    expect(researchDegree("criticalSuccess", "hall-of-reason", false)).toBe("success");
+    expect(researchDegree("criticalSuccess", "hall-of-reason", true)).toBe("criticalSuccess");
+    expect(researchDegree("success", "osibu", false)).toBe("success");
   });
 });
